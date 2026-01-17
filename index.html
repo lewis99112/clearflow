@@ -106,6 +106,20 @@
     const app = initializeApp(firebaseConfig);
     const auth = getAuth(app);
     const db = getFirestore(app);
+const subhead = document.getElementById("subhead");
+
+subhead.textContent = "Signing in…";
+
+signInAnonymously(auth)
+  .then(() => {
+    subhead.textContent = "Ready. Synced via Firebase.";
+    console.log("Signed in OK");
+  })
+  .catch((e) => {
+    subhead.textContent = "Auth error: " + (e.code || e.message);
+    console.error("Auth failed", e);
+    alert("Auth failed: " + (e.code || e.message));
+  });
 
     onAuthStateChanged(auth, async (user) => {
       if (!user) return;
@@ -314,3 +328,4 @@
   </script>
 </body>
 </html>
+
