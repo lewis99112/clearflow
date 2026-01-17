@@ -107,7 +107,7 @@
     const auth = getAuth(app);
     const db = getFirestore(app);
 const subhead = document.getElementById("subhead");
-let uid = null;
+
 
 onAuthStateChanged(auth, async (user) => {
   if (!user) return;
@@ -129,6 +129,21 @@ onAuthStateChanged(auth, async (user) => {
       "Auth error. Enable Anonymous Auth in Firebase.";
     console.error(e);
   }
+}
+async function loadCustomers() {
+  customers = [];
+  const qy = query(
+    collection(db, "customers"),
+    where("ownerUid", "==", uid),
+    orderBy("name", "asc")
+  );
+  const snap = await getDocs(qy);
+  snap.forEach(d => customers.push({ id: d.id, ...d.data() }));
+}
+
+async function refreshAll() {
+  await Promise.all([loadCustomers(), loadJobs()]);
+  render();
 }
 
     async function loadJobs() {
@@ -312,6 +327,7 @@ onAuthStateChanged(auth, async (user) => {
   </script>
 </body>
 </html>
+
 
 
 
