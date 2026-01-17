@@ -108,11 +108,11 @@
     const db = getFirestore(app);
 const subhead = document.getElementById("subhead");
 
-subhead.textContent = "Ready. Synced via Firebase.";
+
 
 signInAnonymously(auth)
   .then(() => {
-    subhead.textContent = "Ready. Synced via Firebase.";
+
     console.log("Signed in OK");
   })
   .catch((e) => {
@@ -121,13 +121,13 @@ signInAnonymously(auth)
     alert("Auth failed: " + (e.code || e.message));
   });
 
-    onAuthStateChanged(auth, async (user) => {
-      if (!user) return;
-      uid = user.uid;
-      $("subhead").textContent = "Ready. Synced via Firebase.";
-      await refreshAll();
-      render();
-    });
+   onAuthStateChanged(auth, async (user) => {
+  if (!user) return;
+  uid = user.uid;
+  subhead.textContent = "Ready. Synced via Firebase.";
+  await refreshAll();
+});
+
 
     async function boot() {
       try { await signInAnonymously(auth); $("subhead").textContent = "Signing in…"; }
@@ -328,5 +328,6 @@ signInAnonymously(auth)
   </script>
 </body>
 </html>
+
 
 
