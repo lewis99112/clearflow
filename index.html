@@ -172,6 +172,8 @@ async function refreshAll() {
         frequencyWeeks: Number(data.frequencyWeeks),
         price: Number(data.price || 0),
         status: data.status || "Due",
+    paid: false,
+
         dueDate: data.dueDate,
         paymentMethod: data.paymentMethod || "Cash",
         notes: data.notes || "",
@@ -190,6 +192,20 @@ async function refreshAll() {
 
       if (activeTab === "customers") {
         content.innerHTML = customers.length
+          // wire up Done buttons
+content.querySelectorAll('[data-action="done"]').forEach(btn => {
+  btn.addEventListener("click", async () => {
+    await markDone(btn.dataset.id);
+  });
+});
+
+// wire up Paid buttons
+content.querySelectorAll('[data-action="paid"]').forEach(btn => {
+  btn.addEventListener("click", async () => {
+    await markPaid(btn.dataset.id);
+  });
+});
+
           ? customers.map(c => `<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm mb-3">
               <div class="font-semibold">${c.name}</div>
               <div class="text-sm text-slate-600">${c.address || ""} ${c.postcode || ""}</div>
@@ -218,6 +234,18 @@ async function refreshAll() {
               <div class="text-sm text-slate-700 mt-1">${j.service} • ${j.frequencyWeeks} weekly • <span class="font-semibold">${pounds(j.price)}</span></div>
               <div class="text-sm text-slate-600 mt-2">${addr}${pc ? ", " + pc : ""}</div>
               <a class="text-sm underline" target="_blank" href="${mapLink(addr, pc)}">Open in Maps</a>
+            <div class="mt-3 flex gap-2">
+  <button data-action="done" data-id="${j.id}"
+    class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">
+    Done
+  </button>
+
+  <button data-action="paid" data-id="${j.id}" ${j.paid ? "disabled" : ""}
+    class="px-3 py-2 rounded-xl bg-white text-slate-900 text-sm font-medium shadow border border-slate-200 ${j.paid ? "opacity-50" : ""}">
+    ${j.paid ? "Paid ✓" : "Paid"}
+  </button>
+</div>
+
             </div>`;
           }).join("")
         : `<div class="p-4 rounded-2xl bg-white border border-slate-200 text-slate-600">Nothing here.</div>`;
@@ -313,6 +341,18 @@ async function refreshAll() {
         e.preventDefault();
         const fd = new FormData(e.target);
         await createJob(Object.fromEntries(fd.entries()));
+      async function markDone(jobId) {
+  await updateDoc(doc(db, "jobs", jobId), { status: "Completed" });
+  await loadJobs();
+  render();
+}
+
+async function markPaid(jobId) {
+  await updateDoc(doc(db, "jobs", jobId), { paid: true });
+  await loadJobs();
+  render();
+}
+
         closeModal();
         activeTab = "today";
         render();
@@ -327,6 +367,7 @@ async function refreshAll() {
   </script>
 </body>
 </html>
+
 
 
 
