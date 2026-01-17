@@ -107,13 +107,21 @@
     const auth = getAuth(app);
     const db = getFirestore(app);
 const subhead = document.getElementById("subhead");
+let uid = null;
+
+onAuthStateChanged(auth, async (user) => {
+  if (!user) return;
+  uid = user.uid;
+  subhead.textContent = "Ready. Synced via Firebase.";
+  await refreshAll();
+});
 
 
 
   
 
    async function boot() {
-  
+  $("subhead").textContent = "Signing in...";
   try {
     await signInAnonymously(auth);
   } catch (e) {
@@ -122,6 +130,7 @@ const subhead = document.getElementById("subhead");
     console.error(e);
   }
 }
+
     async function loadJobs() {
       jobs = [];
       const qy = query(collection(db, "jobs"), where("ownerUid", "==", uid), orderBy("dueDate", "asc"));
@@ -303,6 +312,7 @@ const subhead = document.getElementById("subhead");
   </script>
 </body>
 </html>
+
 
 
 
