@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Clearflow</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+
+<body class="bg-slate-50 text-slate-900">
+  <div class="max-w-3xl mx-auto p-4 pb-28">
+    <div class="flex items-center justify-between gap-3">
+      <div>
+        <h1 class="text-2xl font-bold tracking-tight">Clearflow</h1>
+        <p id="subhead" class="text-sm text-slate-500">Loading…</p>
+      </div>
+      <div class="flex gap-2">
+        <button id="btnAddCustomer" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">+ Customer</button>
+        <button id="btnAddJob" class="px-3 py-2 rounded-xl bg-white text-slate-900 text-sm font-medium shadow border border-slate-200">+ Job</button>
+      </div>
+    </div>
+
+    <div class="mt-4 grid grid-cols-5 gap-2">
+      <button data-tab="today" class="tab px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">Today</button>
+      <button data-tab="week" class="tab px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">Week</button>
+      <button data-tab="overdue" class="tab px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">Overdue</button>
+      <button data-tab="customers" class="tab px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">Customers</button>
+      <button data-tab="all" class="tab px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">All</button>
+    </div>
+
+    <div id="notice" class="mt-4 hidden p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-sm"></div>
+    <div class="mt-4" id="content"></div>
+  </div>
+
+  <div id="modalWrap" class="hidden fixed inset-0 bg-black/40 p-4">
+    <div class="max-w-xl mx-auto bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden">
+      <div class="p-4 border-b border-slate-200 flex items-center justify-between">
+        <div class="font-semibold" id="modalTitle">Modal</div>
+        <button id="btnCloseModal" class="px-2 py-1 rounded-lg hover:bg-slate-100">✕</button>
+      </div>
+      <div class="p-4" id="modalBody"></div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
+    import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-auth.js";
+    import {
+      getFirestore, collection, addDoc, getDocs, query, where, orderBy, updateDoc, doc, serverTimestamp
+    } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
+
+    // ✅ Your Firebase config (already filled)
+    const firebaseConfig = {
+      apiKey: "AIzaSyBKFnGGCcnCq9h-w8wAmvaTeecWidfD5zg",
+      authDomain: "round-runner-b497b.firebaseapp.com",
+      projectId: "round-runner-b497b",
+      storageBucket: "round-runner-b497b.firebasestorage.app",
+      messagingSenderId: "234432711618",
+      appId: "1:234432711618:web:16bc2c6cef88c8da4be45b"
+    };
+
+    const SERVICES = ["Window Clean","Conservatory","Gutter Clean","Fascia + Gutters","Fascia Only"];
+    const FREQS = [4, 8, 12];
+    const PAYMENTS = ["Cash","Bank Transfer"];
+    const STATUSES = ["Due","Booked","Completed","Unpaid","Skipped"];
+
+    const $ = (id) => document.getElementById(id);
+    const content = $("content");
+    const notice = $("notice");
+
+    let uid = null;
+    let activeTab = "today";
+    let customers = [];
+    let jobs = [];
+
+    function todayISO(d = new Date()) {
+      const x = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+      return x.toISOString().slice(0, 10);
+    }
+    function addDays(iso, days) {
+      const d = new Date(iso + "T00:00:00");
+      d.setDate(d.getDate() + days);
+      return d.toISOString().slice(0, 10);
+    }
+    function pounds(n) { return "£" + Number(n || 0).toFixed(2); }
+    function setNotice(msg) {
+      if (!msg) { notice.classList.add("hidden"); notice.textContent = ""; return; }
+      notice.textContent = msg; notice.classList.remove("hidden");
+    }
+    function mapLink(address, postcode) {
+      const q = encodeURIComponent(`${address || ""} ${postcode || ""}`.trim());
+      return `https://www.google.com/maps/search/?api=1&query=${q}`;
+    }
+    function byId(arr, id) { return arr.find(x => x.id === id); }
+    function sortByDueDate(a, b) { return (a.dueDate || "").localeCompare(b.dueDate || ""); }
+
+    function openModal(title, bodyHtml) {
+      $("modalTitle").textContent = title;
+      $("modalBody").innerHTML = bodyHtml;
+      $("modalWrap").classList.remove("hidden");
+    }
+    function closeModal() { $("modalWrap").classList.add("hidden"); $("modalBody").innerHTML = ""; }
+    $("btnCloseModal").addEventListener("click", closeModal);
+    $("modalWrap").addEventListener("click", (e) => { if (e.target.id === "modalWrap") closeModal(); });
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+
+    onAuthStateChanged(auth, async (user) => {
+      if (!user) return;
+      uid = user.uid;
+      $("subhead").textContent = "Ready. Synced via Firebase.";
+      await refreshAll();
+      render();
+    });
+
+    async function boot() {
+      try { await signInAnonymously(auth); $("subhead").textContent = "Signing in…"; }
+      catch (e) {
+        $("subhead").textContent = "Auth error. Enable Anonymous Auth in Firebase.";
+        setNotice("Firebase sign-in failed. Firebase > Authentication > Sign-in method > Anonymous > Enable.");
+        console.error(e);
+      }
+    }
+
+    async function refreshAll() { await Promise.all([loadCustomers(), loadJobs()]); }
+
+    async function loadCustomers() {
+      customers = [];
+      const qy = query(collection(db, "customers"), where("ownerUid", "==", uid), orderBy("createdAt", "desc"));
+      const snap = await getDocs(qy);
+      snap.forEach(d => customers.push({ id: d.id, ...d.data() }));
+    }
+
+    async function loadJobs() {
+      jobs = [];
+      const qy = query(collection(db, "jobs"), where("ownerUid", "==", uid), orderBy("dueDate", "asc"));
+      const snap = await getDocs(qy);
+      snap.forEach(d => jobs.push({ id: d.id, ...d.data() }));
+    }
+
+    async function createCustomer(data) {
+      await addDoc(collection(db, "customers"), {
+        ownerUid: uid, active: true,
+        name: data.name || "", phone: data.phone || "", email: data.email || "",
+        address: data.address || "", postcode: data.postcode || "", notes: data.notes || "",
+        preferredPayment: data.preferredPayment || "Cash",
+        createdAt: serverTimestamp()
+      });
+      await loadCustomers();
+    }
+
+    async function createJob(data) {
+      await addDoc(collection(db, "jobs"), {
+        ownerUid: uid,
+        customerId: data.customerId,
+        service: data.service,
+        frequencyWeeks: Number(data.frequencyWeeks),
+        price: Number(data.price || 0),
+        status: data.status || "Due",
+        dueDate: data.dueDate,
+        paymentMethod: data.paymentMethod || "Cash",
+        notes: data.notes || "",
+        createdAt: serverTimestamp()
+      });
+      await loadJobs();
+    }
+
+    function render() {
+      document.querySelectorAll(".tab").forEach(b => {
+        const is = b.dataset.tab === activeTab;
+        b.className = "tab px-3 py-2 rounded-xl text-sm font-medium border " + (is
+          ? "bg-slate-900 text-white border-slate-900 shadow"
+          : "bg-white text-slate-900 border-slate-200");
+      });
+
+      if (activeTab === "customers") {
+        content.innerHTML = customers.length
+          ? customers.map(c => `<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm mb-3">
+              <div class="font-semibold">${c.name}</div>
+              <div class="text-sm text-slate-600">${c.address || ""} ${c.postcode || ""}</div>
+              <div class="text-sm text-slate-600">${c.phone || ""}</div>
+            </div>`).join("")
+          : `<div class="p-4 rounded-2xl bg-white border border-slate-200 text-slate-600">No customers yet.</div>`;
+        return;
+      }
+
+      const t = todayISO();
+      let list = jobs.filter(j => j.status !== "Completed");
+      if (activeTab === "today") list = list.filter(j => j.dueDate === t);
+      if (activeTab === "week") {
+        const end = addDays(t, 6);
+        list = list.filter(j => j.dueDate >= t && j.dueDate <= end);
+      }
+      if (activeTab === "overdue") list = list.filter(j => j.dueDate < t);
+
+      content.innerHTML = list.length
+        ? list.sort(sortByDueDate).map(j => {
+            const c = customers.find(x => x.id === j.customerId);
+            const addr = (c?.address || ""); const pc = (c?.postcode || "");
+            return `<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm mb-3">
+              <div class="text-sm text-slate-500">${j.dueDate} • ${j.status}</div>
+              <div class="font-semibold">${c?.name || "Unknown customer"}</div>
+              <div class="text-sm text-slate-700 mt-1">${j.service} • ${j.frequencyWeeks} weekly • <span class="font-semibold">${pounds(j.price)}</span></div>
+              <div class="text-sm text-slate-600 mt-2">${addr}${pc ? ", " + pc : ""}</div>
+              <a class="text-sm underline" target="_blank" href="${mapLink(addr, pc)}">Open in Maps</a>
+            </div>`;
+          }).join("")
+        : `<div class="p-4 rounded-2xl bg-white border border-slate-200 text-slate-600">Nothing here.</div>`;
+    }
+
+    function openAddCustomer() {
+      openModal("Add Customer", `
+        <form id="fCustomer" class="grid gap-3">
+          <div class="grid gap-1">
+            <label class="text-sm font-medium">Name</label>
+            <input name="name" class="px-3 py-2 rounded-xl border border-slate-200" required />
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div class="grid gap-1">
+              <label class="text-sm font-medium">Phone</label>
+              <input name="phone" class="px-3 py-2 rounded-xl border border-slate-200" />
+            </div>
+            <div class="grid gap-1">
+              <label class="text-sm font-medium">Email</label>
+              <input name="email" type="email" class="px-3 py-2 rounded-xl border border-slate-200" />
+            </div>
+          </div>
+          <div class="grid gap-1">
+            <label class="text-sm font-medium">Address</label>
+            <input name="address" class="px-3 py-2 rounded-xl border border-slate-200" />
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div class="grid gap-1">
+              <label class="text-sm font-medium">Postcode</label>
+              <input name="postcode" class="px-3 py-2 rounded-xl border border-slate-200" />
+            </div>
+            <div class="grid gap-1">
+              <label class="text-sm font-medium">Payment</label>
+              <select name="preferredPayment" class="px-3 py-2 rounded-xl border border-slate-200">
+                ${PAYMENTS.map(p => `<option>${p}</option>`).join("")}
+              </select>
+            </div>
+          </div>
+          <button class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">Save</button>
+        </form>
+      `);
+
+      document.getElementById("fCustomer").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const fd = new FormData(e.target);
+        await createCustomer(Object.fromEntries(fd.entries()));
+        closeModal();
+        activeTab = "customers";
+        render();
+      });
+    }
+
+    function openAddJob() {
+      if (!customers.length) { setNotice("Add a customer first."); activeTab = "customers"; render(); return; }
+
+      openModal("Add Job", `
+        <form id="fJob" class="grid gap-3">
+          <div class="grid gap-1">
+            <label class="text-sm font-medium">Customer</label>
+            <select name="customerId" class="px-3 py-2 rounded-xl border border-slate-200" required>
+              ${customers.map(c => `<option value="${c.id}">${c.name}</option>`).join("")}
+            </select>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div class="grid gap-1">
+              <label class="text-sm font-medium">Service</label>
+              <select name="service" class="px-3 py-2 rounded-xl border border-slate-200">
+                ${SERVICES.map(s => `<option>${s}</option>`).join("")}
+              </select>
+            </div>
+            <div class="grid gap-1">
+              <label class="text-sm font-medium">Frequency</label>
+              <select name="frequencyWeeks" class="px-3 py-2 rounded-xl border border-slate-200">
+                ${FREQS.map(f => `<option value="${f}">${f} weekly</option>`).join("")}
+              </select>
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div class="grid gap-1">
+              <label class="text-sm font-medium">Due date</label>
+              <input name="dueDate" type="date" class="px-3 py-2 rounded-xl border border-slate-200" value="${todayISO()}" />
+            </div>
+            <div class="grid gap-1">
+              <label class="text-sm font-medium">Price (£)</label>
+              <input name="price" type="number" step="0.01" class="px-3 py-2 rounded-xl border border-slate-200" />
+            </div>
+          </div>
+          <button class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">Save</button>
+        </form>
+      `);
+
+      document.getElementById("fJob").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const fd = new FormData(e.target);
+        await createJob(Object.fromEntries(fd.entries()));
+        closeModal();
+        activeTab = "today";
+        render();
+      });
+    }
+
+    document.querySelectorAll(".tab").forEach(b => b.addEventListener("click", () => { activeTab = b.dataset.tab; render(); }));
+    document.getElementById("btnAddCustomer").addEventListener("click", openAddCustomer);
+    document.getElementById("btnAddJob").addEventListener("click", openAddJob);
+
+    boot();
+  </script>
+</body>
+</html>
