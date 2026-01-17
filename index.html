@@ -110,14 +110,7 @@ const subhead = document.getElementById("subhead");
 
 
 
-    async function boot() {
-      try { await signInAnonymously(auth); $("subhead").textContent = "Signing in…"; }
-      catch (e) {
-        $("subhead").textContent = "Auth error. Enable Anonymous Auth in Firebase.";
-        setNotice("Firebase sign-in failed. Firebase > Authentication > Sign-in method > Anonymous > Enable.");
-        console.error(e);
-      }
-    }
+  
 
    async function boot() {
   $("subhead").textContent = "Signing in...";
@@ -310,6 +303,7 @@ const subhead = document.getElementById("subhead");
   </script>
 </body>
 </html>
+
 
 
 
