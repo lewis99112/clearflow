@@ -108,7 +108,7 @@
     const db = getFirestore(app);
 const subhead = document.getElementById("subhead");
 
-subhead.textContent = "Signing in…";
+subhead.textContent = "Ready. Synced via Firebase.";
 
 signInAnonymously(auth)
   .then(() => {
@@ -328,4 +328,5 @@ signInAnonymously(auth)
   </script>
 </body>
 </html>
+
 
