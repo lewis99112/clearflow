@@ -108,26 +108,6 @@
     const db = getFirestore(app);
 const subhead = document.getElementById("subhead");
 
-subhead.textContent = "Signing in...";
-
-
-signInAnonymously(auth)
-  .then(() => {
-
-    console.log("Signed in OK");
-  })
-  .catch((e) => {
-    subhead.textContent = "Auth error: " + (e.code || e.message);
-    console.error("Auth failed", e);
-    alert("Auth failed: " + (e.code || e.message));
-  });
-
-   onAuthStateChanged(auth, async (user) => {
-  if (!user) return;
-  uid = user.uid;
-  subhead.textContent = "Ready. Synced via Firebase.";
-  await refreshAll();
-});
 
 
     async function boot() {
@@ -139,15 +119,16 @@ signInAnonymously(auth)
       }
     }
 
-    async function refreshAll() { await Promise.all([loadCustomers(), loadJobs()]); }
-
-    async function loadCustomers() {
-      customers = [];
-      const qy = query(collection(db, "customers"), where("ownerUid", "==", uid), orderBy("createdAt", "desc"));
-      const snap = await getDocs(qy);
-      snap.forEach(d => customers.push({ id: d.id, ...d.data() }));
-    }
-
+   async function boot() {
+  $("subhead").textContent = "Signing in...";
+  try {
+    await signInAnonymously(auth);
+  } catch (e) {
+    $("subhead").textContent =
+      "Auth error. Enable Anonymous Auth in Firebase.";
+    console.error(e);
+  }
+}
     async function loadJobs() {
       jobs = [];
       const qy = query(collection(db, "jobs"), where("ownerUid", "==", uid), orderBy("dueDate", "asc"));
@@ -329,6 +310,7 @@ signInAnonymously(auth)
   </script>
 </body>
 </html>
+
 
 
 
