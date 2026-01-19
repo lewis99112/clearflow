@@ -46,11 +46,10 @@
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
     import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-auth.js";
     import {
-      getFirestore, collection, addDoc, getDocs, query, where, orderBy,
-      updateDoc, doc, deleteDoc, serverTimestamp
+      getFirestore, collection, addDoc, getDocs, query, where, orderBy, updateDoc, doc, serverTimestamp
     } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
 
-    // ✅ Your Firebase config
+    // ✅ Your Firebase config (keep as-is)
     const firebaseConfig = {
       apiKey: "AIzaSyBKFnGGCcnCq9h-w8wAmvaTeecWidfD5zg",
       authDomain: "round-runner-b497b.firebaseapp.com",
@@ -61,7 +60,8 @@
     };
 
     const SERVICES = ["Window Clean","Conservatory","Gutter Clean","Fascia + Gutters","Fascia Only"];
-    const FREQS = [4, 8, 12];
+    // weeks: 0=one-off, 52=12 months (same date next year)
+    const FREQS = [0, 4, 8, 12, 52];
     const PAYMENTS = ["Cash","Bank Transfer"];
 
     const $ = (id) => document.getElementById(id);
@@ -78,80 +78,54 @@
     let customers = [];
     let jobs = [];
 
-    // -------- helpers --------
-    function val(x, fallback) { return (x === undefined || x === null) ? fallback : x; }
-    function str(x, fallback) { x = val(x, ""); x = String(x); return x ? x : fallback; }
-    function todayISO(d) {
-      d = d || new Date();
+    function setNotice(msg) {
+      if (!msg) { notice.classList.add("hidden"); notice.textContent = ""; return; }
+      notice.textContent = msg; notice.classList.remove("hidden");
+    }
+
+    function todayISO(d = new Date()) {
       const x = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
       return x.toISOString().slice(0, 10);
     }
+
     function addDays(iso, days) {
       const d = new Date(iso + "T00:00:00");
       d.setDate(d.getDate() + days);
       return d.toISOString().slice(0, 10);
     }
-    function pounds(n) { return "£" + Number(val(n, 0)).toFixed(2); }
-    function setNotice(msg) {
-      if (!msg) { notice.classList.add("hidden"); notice.textContent = ""; return; }
-      notice.textContent = msg; notice.classList.remove("hidden");
+
+    function addMonths(iso, months) {
+      const d = new Date(iso + "T00:00:00");
+      d.setMonth(d.getMonth() + months);
+      return d.toISOString().slice(0, 10);
     }
+
+    function pounds(n) { return "£" + Number(n || 0).toFixed(2); }
+
+    function freqLabel(f) {
+      f = Number(f);
+      if (f === 0) return "One-off";
+      if (f === 52) return "12 months";
+      return f + " weekly";
+    }
+
     function mapLink(address, postcode) {
-      const q = encodeURIComponent((str(address,"") + " " + str(postcode,"")).trim());
+      const q = encodeURIComponent(((address || "") + " " + (postcode || "")).trim());
       return "https://www.google.com/maps/search/?api=1&query=" + q;
     }
-    function getCustomerById(id) {
-      for (let i = 0; i < customers.length; i++) if (customers[i].id === id) return customers[i];
-      return null;
-    }
 
-    async function copyToClipboard(text) {
-      try {
-        await navigator.clipboard.writeText(text);
-        setNotice("Copied invoice text ✅");
-        setTimeout(() => setNotice(""), 2000);
-      } catch (e) {
-        // fallback
-        const ta = document.createElement("textarea");
-        ta.value = text;
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand("copy");
-        document.body.removeChild(ta);
-        setNotice("Copied invoice text ✅");
-        setTimeout(() => setNotice(""), 2000);
-      }
-    }
-
-    // -------- modal --------
     function openModal(title, bodyHtml) {
       $("modalTitle").textContent = title;
       $("modalBody").innerHTML = bodyHtml;
       $("modalWrap").classList.remove("hidden");
     }
-    function closeModal() { $("modalWrap").classList.add("hidden"); $("modalBody").innerHTML = ""; }
+    function closeModal() {
+      $("modalWrap").classList.add("hidden");
+      $("modalBody").innerHTML = "";
+    }
     $("btnCloseModal").addEventListener("click", closeModal);
     $("modalWrap").addEventListener("click", (e) => { if (e.target.id === "modalWrap") closeModal(); });
 
-    // -------- auth --------
-    onAuthStateChanged(auth, async (user) => {
-      if (!user) return;
-      uid = user.uid;
-      subhead.textContent = "Ready. Synced via Firebase.";
-      await refreshAll();
-    });
-
-    async function boot() {
-      subhead.textContent = "Signing in…";
-      try {
-        await signInAnonymously(auth);
-      } catch (e) {
-        subhead.textContent = "Auth error. Enable Anonymous Auth in Firebase.";
-        console.error(e);
-      }
-    }
-
-    // -------- data --------
     async function loadCustomers() {
       customers = [];
       const qy = query(
@@ -183,13 +157,13 @@
       await addDoc(collection(db, "customers"), {
         ownerUid: uid,
         active: true,
-        name: str(data.name, ""),
-        phone: str(data.phone, ""),
-        email: str(data.email, ""),
-        address: str(data.address, ""),
-        postcode: str(data.postcode, ""),
-        preferredPayment: str(data.preferredPayment, "Cash"),
-        notes: str(data.notes, ""),
+        name: data.name || "",
+        phone: data.phone || "",
+        email: data.email || "",
+        address: data.address || "",
+        postcode: data.postcode || "",
+        notes: data.notes || "",
+        preferredPayment: data.preferredPayment || "Cash",
         createdAt: serverTimestamp()
       });
       await loadCustomers();
@@ -199,67 +173,190 @@
       await addDoc(collection(db, "jobs"), {
         ownerUid: uid,
         customerId: data.customerId,
-        service: str(data.service, "Window Clean"),
-        frequencyWeeks: Number(val(data.frequencyWeeks, 4)),
-        price: Number(val(data.price, 0)),
-        status: "Due",
-        paid: false,
+        service: data.service,
+        frequencyWeeks: Number(data.frequencyWeeks),
+        price: Number(data.price || 0),
         dueDate: data.dueDate,
-        paymentMethod: str(data.paymentMethod, "Cash"),
-        notes: str(data.notes, ""),
+        paymentMethod: data.paymentMethod || "Cash",
+        notes: data.notes || "",
+        paid: false,
+        status: "Due",
         createdAt: serverTimestamp()
       });
       await loadJobs();
     }
 
-    async function markDone(jobId) {
-      await updateDoc(doc(db, "jobs", jobId), { status: "Completed", completedAt: serverTimestamp() });
-      await loadJobs();
+    async function setCustomerActive(customerId, isActive) {
+      await updateDoc(doc(db, "customers", customerId), { active: !!isActive });
+      await loadCustomers();
       render();
     }
 
     async function markPaid(jobId) {
-      await updateDoc(doc(db, "jobs", jobId), { paid: true, paidAt: serverTimestamp() });
+      await updateDoc(doc(db, "jobs", jobId), { paid: true });
       await loadJobs();
       render();
     }
 
-    async function toggleCustomerActive(customerId, active) {
-      await updateDoc(doc(db, "customers", customerId), { active: !!active });
-      await loadCustomers();
-      render();
-    }
+    async function markDone(jobId) {
+      const job = jobs.find(j => j.id === jobId);
+      if (!job) return;
 
-    async function deleteCustomer(customerId) {
-      const ok = confirm("Delete this customer? (This cannot be undone)");
-      if (!ok) return;
-      await deleteDoc(doc(db, "customers", customerId));
-      await loadCustomers();
+      // mark completed
+      await updateDoc(doc(db, "jobs", jobId), { status: "Completed" });
+
+      // auto-create next job if recurring
+      const fw = Number(job.frequencyWeeks || 0);
+      if (fw !== 0) {
+        let nextDue = job.dueDate || todayISO();
+        if (fw === 52) nextDue = addMonths(nextDue, 12);
+        else nextDue = addDays(nextDue, fw * 7);
+
+        await addDoc(collection(db, "jobs"), {
+          ownerUid: uid,
+          customerId: job.customerId,
+          service: job.service,
+          frequencyWeeks: fw,
+          price: Number(job.price || 0),
+          dueDate: nextDue,
+          paymentMethod: job.paymentMethod || "Cash",
+          notes: job.notes || "",
+          paid: false,
+          status: "Due",
+          createdAt: serverTimestamp()
+        });
+      }
+
+      await loadJobs();
       render();
     }
 
     function makeInvoiceText(job, customer) {
-      const name = str(customer && customer.name, "there");
-      const addr = (str(customer && customer.address, "") + (str(customer && customer.postcode, "") ? (", " + str(customer && customer.postcode, "")) : "")).trim();
-      const date = str(job && job.dueDate, "");
-      const service = str(job && job.service, "Window Clean");
-      const price = pounds(job && job.price);
+      const name = (customer && customer.name) ? customer.name : "there";
+      const addr = [];
+      if (customer && customer.address) addr.push(customer.address);
+      if (customer && customer.postcode) addr.push(customer.postcode);
+
+      const when = job && job.dueDate ? job.dueDate : "";
+      const service = job && job.service ? job.service : "Window Clean";
+      const price = pounds(job && job.price ? job.price : 0);
 
       return (
 `Hi ${name},
 
-Just a quick note to say your ${service} has been completed (${date}).
+Just a quick one — your ${service} on ${when} is done.
 
-Amount due: ${price}
-${addr ? ("Address: " + addr + "\n") : ""}
+Amount: ${price}
+Address: ${addr.join(", ")}
+
 Thanks,
 Clearflow`
       );
     }
 
-    // -------- UI / render --------
+    async function copyToClipboard(text) {
+      try {
+        await navigator.clipboard.writeText(text);
+        setNotice("Invoice text copied to clipboard ✅");
+        setTimeout(() => setNotice(""), 2500);
+      } catch (e) {
+        setNotice("Couldn’t copy automatically. Your browser blocked it.");
+      }
+    }
+
+    function renderCustomers() {
+      const list = customers.slice();
+
+      content.innerHTML = list.length
+        ? list.map(c => {
+            const isActive = (c.active !== false);
+            return `
+              <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm mb-3 ${isActive ? "" : "opacity-60"}">
+                <div class="flex items-start justify-between gap-3">
+                  <div>
+                    <div class="font-semibold">${c.name || ""}</div>
+                    <div class="text-sm text-slate-600">${(c.address || "")}${c.postcode ? " " + c.postcode : ""}</div>
+                    <div class="text-sm text-slate-600">${c.phone || ""}</div>
+                    ${c.notes ? `<div class="text-sm text-slate-500 mt-2 whitespace-pre-wrap">${c.notes}</div>` : ""}
+                  </div>
+                  <div class="flex gap-2">
+                    ${isActive
+                      ? `<button data-action="disableCustomer" data-id="${c.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Disable</button>`
+                      : `<button data-action="enableCustomer" data-id="${c.id}" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">Enable</button>`
+                    }
+                  </div>
+                </div>
+              </div>
+            `;
+          }).join("")
+        : `<div class="p-4 rounded-2xl bg-white border border-slate-200 text-slate-600">No customers yet.</div>`;
+
+      // wire customer buttons
+      content.querySelectorAll('[data-action="disableCustomer"]').forEach(btn => {
+        btn.addEventListener("click", async () => {
+          await setCustomerActive(btn.dataset.id, false);
+        });
+      });
+      content.querySelectorAll('[data-action="enableCustomer"]').forEach(btn => {
+        btn.addEventListener("click", async () => {
+          await setCustomerActive(btn.dataset.id, true);
+        });
+      });
+    }
+
+    function renderJobs(list) {
+      content.innerHTML = list.length
+        ? list.map(j => {
+            const c = customers.find(x => x.id === j.customerId) || null;
+            const addr = c ? (c.address || "") : "";
+            const pc = c ? (c.postcode || "") : "";
+
+            const paidBadge = j.paid ? `<span class="ml-2 text-xs px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200">Paid</span>` : "";
+            const status = j.status || "Due";
+
+            return `
+              <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm mb-3">
+                <div class="text-sm text-slate-500">${j.dueDate || ""} • ${status} ${paidBadge}</div>
+                <div class="font-semibold">${c ? (c.name || "Customer") : "Unknown customer"}</div>
+                <div class="text-sm text-slate-700 mt-1">${(j.service || "")} • ${freqLabel(j.frequencyWeeks)} • <span class="font-semibold">${pounds(j.price)}</span></div>
+                <div class="text-sm text-slate-600 mt-2">${addr}${pc ? ", " + pc : ""}</div>
+                <a class="text-sm underline" target="_blank" href="${mapLink(addr, pc)}">Open in Maps</a>
+
+                ${j.notes ? `<div class="text-sm text-slate-500 mt-2 whitespace-pre-wrap">${j.notes}</div>` : ""}
+
+                <div class="mt-3 flex flex-wrap gap-2">
+                  <button data-action="done" data-id="${j.id}" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">Done</button>
+                  <button data-action="paid" data-id="${j.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Paid</button>
+                  <button data-action="invoice" data-id="${j.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Invoice</button>
+                </div>
+              </div>
+            `;
+          }).join("")
+        : `<div class="p-4 rounded-2xl bg-white border border-slate-200 text-slate-600">Nothing here.</div>`;
+
+      // wire job buttons
+      content.querySelectorAll('[data-action="done"]').forEach(btn => {
+        btn.addEventListener("click", async () => {
+          await markDone(btn.dataset.id);
+        });
+      });
+      content.querySelectorAll('[data-action="paid"]').forEach(btn => {
+        btn.addEventListener("click", async () => {
+          await markPaid(btn.dataset.id);
+        });
+      });
+      content.querySelectorAll('[data-action="invoice"]').forEach(btn => {
+        btn.addEventListener("click", async () => {
+          const job = jobs.find(x => x.id === btn.dataset.id);
+          if (!job) return;
+          const cust = customers.find(x => x.id === job.customerId) || null;
+          const text = makeInvoiceText(job, cust);
+          await copyToClipboard(text);
+        });
+      });
+    }
+
     function render() {
-      // tabs style
       document.querySelectorAll(".tab").forEach(b => {
         const is = b.dataset.tab === activeTab;
         b.className = "tab px-3 py-2 rounded-xl text-sm font-medium border " + (is
@@ -267,151 +364,31 @@ Clearflow`
           : "bg-white text-slate-900 border-slate-200");
       });
 
-      // Customers tab
       if (activeTab === "customers") {
-        if (!customers.length) {
-          content.innerHTML = `<div class="p-4 rounded-2xl bg-white border border-slate-200 text-slate-600">No customers yet.</div>`;
-          return;
-        }
-
-        content.innerHTML = customers.map(c => {
-          const active = !!c.active;
-          const badge = active
-            ? `<span class="ml-2 text-xs px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">Active</span>`
-            : `<span class="ml-2 text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-700 border border-slate-200">Disabled</span>`;
-
-          return `
-            <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm mb-3">
-              <div class="flex items-center justify-between gap-3">
-                <div class="font-semibold">
-                  ${str(c.name,"")}
-                  ${badge}
-                </div>
-                <div class="flex gap-2">
-                  <button data-action="toggle" data-id="${c.id}" data-active="${active ? "1":"0"}"
-                    class="px-3 py-1.5 rounded-lg text-xs font-medium border ${active ? "bg-white border-slate-200" : "bg-slate-900 text-white border-slate-900"}">
-                    ${active ? "Disable" : "Enable"}
-                  </button>
-                  <button data-action="deleteCustomer" data-id="${c.id}"
-                    class="px-3 py-1.5 rounded-lg text-xs font-medium border bg-white border-slate-200">
-                    Delete
-                  </button>
-                </div>
-              </div>
-              <div class="text-sm text-slate-600 mt-1">${str(c.address,"")} ${str(c.postcode,"")}</div>
-              <div class="text-sm text-slate-600">${str(c.phone,"")}</div>
-            </div>
-          `;
-        }).join("");
-
-        // wire up buttons
-        content.querySelectorAll('[data-action="toggle"]').forEach(btn => {
-          btn.addEventListener("click", async () => {
-            const id = btn.dataset.id;
-            const currentlyActive = btn.dataset.active === "1";
-            await toggleCustomerActive(id, !currentlyActive);
-          });
-        });
-        content.querySelectorAll('[data-action="deleteCustomer"]').forEach(btn => {
-          btn.addEventListener("click", async () => {
-            await deleteCustomer(btn.dataset.id);
-          });
-        });
-
+        renderCustomers();
         return;
       }
 
-      // Jobs tabs
       const t = todayISO();
-      let list = jobs.slice();
+      let list = jobs.filter(j => (j.status || "Due") !== "Completed");
 
-      // hide completed by default
-      if (activeTab !== "all") {
-        list = list.filter(j => str(j.status,"") !== "Completed");
-      }
-
-      if (activeTab === "today") list = list.filter(j => str(j.dueDate,"") === t);
+      if (activeTab === "today") list = list.filter(j => j.dueDate === t);
       if (activeTab === "week") {
         const end = addDays(t, 6);
-        list = list.filter(j => str(j.dueDate,"") >= t && str(j.dueDate,"") <= end);
+        list = list.filter(j => j.dueDate >= t && j.dueDate <= end);
       }
-      if (activeTab === "overdue") list = list.filter(j => str(j.dueDate,"") < t);
+      if (activeTab === "overdue") list = list.filter(j => j.dueDate < t);
+      if (activeTab === "all") list = jobs.slice();
 
-      if (!list.length) {
-        content.innerHTML = `<div class="p-4 rounded-2xl bg-white border border-slate-200 text-slate-600">Nothing here.</div>`;
-        return;
-      }
+      // Hide jobs for disabled customers? (optional)
+      // list = list.filter(j => {
+      //   const c = customers.find(x => x.id === j.customerId);
+      //   return !c || c.active !== false;
+      // });
 
-      content.innerHTML = list.map(j => {
-        const c = getCustomerById(j.customerId);
-        const customerName = c ? str(c.name,"") : "Unknown customer";
-        const addr = c ? str(c.address,"") : "";
-        const pc = c ? str(c.postcode,"") : "";
-        const paid = !!j.paid;
-
-        const paidBadge = paid
-          ? `<span class="ml-2 text-xs px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">Paid</span>`
-          : ``;
-
-        return `
-          <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm mb-3">
-            <div class="text-sm text-slate-500">${str(j.dueDate,"")} • ${str(j.status,"Due")}${paidBadge}</div>
-
-            <div class="flex items-start justify-between gap-3 mt-1">
-              <div>
-                <div class="font-semibold">${customerName}</div>
-                <div class="text-sm text-slate-700 mt-1">
-                  ${str(j.service,"Window Clean")} • ${Number(val(j.frequencyWeeks,4))} weekly •
-                  <span class="font-semibold">${pounds(j.price)}</span>
-                </div>
-                <div class="text-sm text-slate-600 mt-2">${addr}${pc ? ", " + pc : ""}</div>
-                <a class="text-sm underline" target="_blank" href="${mapLink(addr, pc)}">Open in Maps</a>
-              </div>
-
-              <div class="flex flex-col gap-2">
-                <button data-action="done" data-id="${j.id}"
-                  class="px-3 py-2 rounded-xl bg-slate-900 text-white text-xs font-medium shadow">
-                  Done
-                </button>
-                <button data-action="paid" data-id="${j.id}"
-                  class="px-3 py-2 rounded-xl bg-white text-slate-900 text-xs font-medium shadow border border-slate-200">
-                  Paid
-                </button>
-                <button data-action="invoice" data-id="${j.id}"
-                  class="px-3 py-2 rounded-xl bg-white text-slate-900 text-xs font-medium shadow border border-slate-200">
-                  Invoice
-                </button>
-              </div>
-            </div>
-          </div>
-        `;
-      }).join("");
-
-      // wire up job action buttons
-      content.querySelectorAll('[data-action="done"]').forEach(btn => {
-        btn.addEventListener("click", async () => {
-          await markDone(btn.dataset.id);
-        });
-      });
-
-      content.querySelectorAll('[data-action="paid"]').forEach(btn => {
-        btn.addEventListener("click", async () => {
-          await markPaid(btn.dataset.id);
-        });
-      });
-
-      content.querySelectorAll('[data-action="invoice"]').forEach(btn => {
-        btn.addEventListener("click", async () => {
-          const jobId = btn.dataset.id;
-          const job = jobs.find(x => x.id === jobId);
-          const cust = job ? getCustomerById(job.customerId) : null;
-          const text = makeInvoiceText(job, cust);
-          await copyToClipboard(text);
-        });
-      });
+      renderJobs(list);
     }
 
-    // -------- forms --------
     function openAddCustomer() {
       openModal("Add Customer", `
         <form id="fCustomer" class="grid gap-3">
@@ -419,6 +396,7 @@ Clearflow`
             <label class="text-sm font-medium">Name</label>
             <input name="name" class="px-3 py-2 rounded-xl border border-slate-200" required />
           </div>
+
           <div class="grid grid-cols-2 gap-3">
             <div class="grid gap-1">
               <label class="text-sm font-medium">Phone</label>
@@ -429,10 +407,12 @@ Clearflow`
               <input name="email" type="email" class="px-3 py-2 rounded-xl border border-slate-200" />
             </div>
           </div>
+
           <div class="grid gap-1">
             <label class="text-sm font-medium">Address</label>
             <input name="address" class="px-3 py-2 rounded-xl border border-slate-200" />
           </div>
+
           <div class="grid grid-cols-2 gap-3">
             <div class="grid gap-1">
               <label class="text-sm font-medium">Postcode</label>
@@ -445,10 +425,11 @@ Clearflow`
               </select>
             </div>
           </div>
+
           <div class="grid gap-1">
-  <label class="text-sm font-medium">Notes</label>
-  <textarea name="notes" rows="3" class="px-3 py-2 rounded-xl border border-slate-200" placeholder="Gate code, dog, best time, etc"></textarea>
-</div>
+            <label class="text-sm font-medium">Notes</label>
+            <textarea name="notes" rows="3" class="px-3 py-2 rounded-xl border border-slate-200" placeholder="Gate code, dog, best time, etc"></textarea>
+          </div>
 
           <button class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">Save</button>
         </form>
@@ -465,18 +446,10 @@ Clearflow`
     }
 
     function openAddJob() {
-      if (!customers.length) {
-        setNotice("Add a customer first.");
-        activeTab = "customers";
-        render();
-        return;
-      }
-
-      // Only active customers in the dropdown
-      const activeCustomers = customers.filter(c => !!c.active);
+      const activeCustomers = customers.filter(c => c.active !== false);
 
       if (!activeCustomers.length) {
-        setNotice("No ACTIVE customers. Enable a customer first.");
+        setNotice("Add a customer first.");
         activeTab = "customers";
         render();
         return;
@@ -501,7 +474,7 @@ Clearflow`
             <div class="grid gap-1">
               <label class="text-sm font-medium">Frequency</label>
               <select name="frequencyWeeks" class="px-3 py-2 rounded-xl border border-slate-200">
-                ${FREQS.map(f => `<option value="${f}">${f} weekly</option>`).join("")}
+                ${FREQS.map(f => `<option value="${f}">${freqLabel(f)}</option>`).join("")}
               </select>
             </div>
           </div>
@@ -515,6 +488,11 @@ Clearflow`
               <label class="text-sm font-medium">Price (£)</label>
               <input name="price" type="number" step="0.01" class="px-3 py-2 rounded-xl border border-slate-200" />
             </div>
+          </div>
+
+          <div class="grid gap-1">
+            <label class="text-sm font-medium">Notes</label>
+            <textarea name="notes" rows="3" class="px-3 py-2 rounded-xl border border-slate-200" placeholder="Anything about this job…"></textarea>
           </div>
 
           <button class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">Save</button>
@@ -531,15 +509,33 @@ Clearflow`
       });
     }
 
-    // -------- events --------
-    document.querySelectorAll(".tab").forEach(b =>
-      b.addEventListener("click", () => { activeTab = b.dataset.tab; setNotice(""); render(); })
-    );
+    // TAB + BUTTON WIRING
+    document.querySelectorAll(".tab").forEach(b => b.addEventListener("click", () => {
+      activeTab = b.dataset.tab;
+      render();
+    }));
     $("btnAddCustomer").addEventListener("click", openAddCustomer);
     $("btnAddJob").addEventListener("click", openAddJob);
+
+    // AUTH: only show "Ready" once auth state is live
+    onAuthStateChanged(auth, async (user) => {
+      if (!user) return;
+      uid = user.uid;
+      subhead.textContent = "Ready. Synced via Firebase.";
+      await refreshAll();
+    });
+
+    async function boot() {
+      subhead.textContent = "Signing in...";
+      try {
+        await signInAnonymously(auth);
+      } catch (e) {
+        subhead.textContent = "Auth error. Enable Anonymous Auth in Firebase.";
+        console.error(e);
+      }
+    }
 
     boot();
   </script>
 </body>
 </html>
-
