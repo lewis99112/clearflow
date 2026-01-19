@@ -46,10 +46,10 @@
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
     import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-auth.js";
     import {
-      getFirestore, collection, addDoc, getDocs, query, where, orderBy, updateDoc, doc, serverTimestamp
+      getFirestore, collection, addDoc, getDocs, query, where, orderBy, updateDoc, doc, deleteDoc, serverTimestamp
     } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
 
-    // ✅ Your Firebase config (already filled)
+    // ✅ Firebase config (yours)
     const firebaseConfig = {
       apiKey: "AIzaSyBKFnGGCcnCq9h-w8wAmvaTeecWidfD5zg",
       authDomain: "round-runner-b497b.firebaseapp.com",
@@ -62,11 +62,15 @@
     const SERVICES = ["Window Clean","Conservatory","Gutter Clean","Fascia + Gutters","Fascia Only"];
     const FREQS = [4, 8, 12];
     const PAYMENTS = ["Cash","Bank Transfer"];
-    const STATUSES = ["Due","Booked","Completed","Unpaid","Skipped"];
 
     const $ = (id) => document.getElementById(id);
     const content = $("content");
     const notice = $("notice");
+    const subhead = $("subhead");
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
 
     let uid = null;
     let activeTab = "today";
@@ -91,60 +95,29 @@
       const q = encodeURIComponent(`${address || ""} ${postcode || ""}`.trim());
       return `https://www.google.com/maps/search/?api=1&query=${q}`;
     }
-    function byId(arr, id) { return arr.find(x => x.id === id); }
-    function sortByDueDate(a, b) { return (a.dueDate || "").localeCompare(b.dueDate || ""); }
 
     function openModal(title, bodyHtml) {
       $("modalTitle").textContent = title;
       $("modalBody").innerHTML = bodyHtml;
       $("modalWrap").classList.remove("hidden");
     }
-    function closeModal() { $("modalWrap").classList.add("hidden"); $("modalBody").innerHTML = ""; }
+    function closeModal() {
+      $("modalWrap").classList.add("hidden");
+      $("modalBody").innerHTML = "";
+    }
     $("btnCloseModal").addEventListener("click", closeModal);
     $("modalWrap").addEventListener("click", (e) => { if (e.target.id === "modalWrap") closeModal(); });
 
-    const app = initializeApp(firebaseConfig);
-    const auth = getAuth(app);
-    const db = getFirestore(app);
-const subhead = document.getElementById("subhead");
-
-
-onAuthStateChanged(auth, async (user) => {
-  if (!user) return;
-  uid = user.uid;
-  subhead.textContent = "Ready. Synced via Firebase.";
-  await refreshAll();
-});
-
-
-
-  
-
-   async function boot() {
-  $("subhead").textContent = "Signing in...";
-  try {
-    await signInAnonymously(auth);
-  } catch (e) {
-    $("subhead").textContent =
-      "Auth error. Enable Anonymous Auth in Firebase.";
-    console.error(e);
-  }
-}
-async function loadCustomers() {
-  customers = [];
-  const qy = query(
-    collection(db, "customers"),
-    where("ownerUid", "==", uid),
-    orderBy("name", "asc")
-  );
-  const snap = await getDocs(qy);
-  snap.forEach(d => customers.push({ id: d.id, ...d.data() }));
-}
-
-async function refreshAll() {
-  await Promise.all([loadCustomers(), loadJobs()]);
-  render();
-}
+    // ---------- FIREBASE LOAD/SAVE ----------
+    async function loadCustomers() {
+      customers = [];
+      // show active customers first; inactive still load so you can re-enable
+      const qy = query(collection(db, "customers"), where("ownerUid", "==", uid), orderBy("name", "asc"));
+      const snap = await getDocs(qy);
+      snap.forEach(d => customers.push({ id: d.id, ...d.data() }));
+      // default any missing active -> true
+      customers = customers.map(c => ({ active: true, ...c }));
+    }
 
     async function loadJobs() {
       jobs = [];
@@ -153,15 +126,26 @@ async function refreshAll() {
       snap.forEach(d => jobs.push({ id: d.id, ...d.data() }));
     }
 
+    async function refreshAll() {
+      await Promise.all([loadCustomers(), loadJobs()]);
+      render();
+    }
+
     async function createCustomer(data) {
       await addDoc(collection(db, "customers"), {
-        ownerUid: uid, active: true,
-        name: data.name || "", phone: data.phone || "", email: data.email || "",
-        address: data.address || "", postcode: data.postcode || "", notes: data.notes || "",
+        ownerUid: uid,
+        active: true,
+        name: data.name || "",
+        phone: data.phone || "",
+        email: data.email || "",
+        address: data.address || "",
+        postcode: data.postcode || "",
         preferredPayment: data.preferredPayment || "Cash",
+        notes: data.notes || "",
         createdAt: serverTimestamp()
       });
       await loadCustomers();
+      render();
     }
 
     async function createJob(data) {
@@ -171,86 +155,226 @@ async function refreshAll() {
         service: data.service,
         frequencyWeeks: Number(data.frequencyWeeks),
         price: Number(data.price || 0),
-        status: data.status || "Due",
-    paid: false,
-
+        status: "Due",
+        paid: false,
         dueDate: data.dueDate,
         paymentMethod: data.paymentMethod || "Cash",
         notes: data.notes || "",
         createdAt: serverTimestamp()
       });
       await loadJobs();
+      render();
+    }
+
+    async function markDone(jobId) {
+      await updateDoc(doc(db, "jobs", jobId), { status: "Completed" });
+      await loadJobs();
+      render();
+    }
+
+    async function markPaid(jobId) {
+      await updateDoc(doc(db, "jobs", jobId), { paid: true, status: "Paid" });
+      await loadJobs();
+      render();
+    }
+
+    async function toggleCustomerActive(customerId, newActive) {
+      await updateDoc(doc(db, "customers", customerId), { active: newActive });
+      await loadCustomers();
+      render();
+    }
+
+    async function deleteCustomer(customerId) {
+      // Simple: deletes customer record. (It will NOT delete old jobs; those may show "Unknown customer")
+      await deleteDoc(doc(db, "customers", customerId));
+      await loadCustomers();
+      render();
+    }
+
+    // ---------- INVOICE MESSAGE ----------
+    function makeInvoiceText(job, customer) {
+      const name = customer?.name || "there";
+      const addr = [customer?.address, customer?.postcode].filter(Boolean).join(", ");
+      const date = job?.dueDate || "";
+      const service = job?.service || "Window Clean";
+      const price = pounds(job?.price || 0);
+
+      return (
+`Hi ${name},
+Just a quick message from Clearflow — your ${service} was done on ${date}.
+Amount due: ${price}
+Address: ${addr}
+
+Thanks,
+Lewis (Clearflow)`
+      );
+    }
+
+    async function copyToClipboard(text) {
+      try {
+        await navigator.clipboard.writeText(text);
+        setNotice("Invoice message copied. Paste it into WhatsApp/text/email.");
+        setTimeout(() => setNotice(""), 2500);
+      } catch {
+        // fallback
+        prompt("Copy this message:", text);
+      }
+    }
+
+    // ---------- UI RENDER ----------
+    function setTabsUI() {
+      document.querySelectorAll(".tab").forEach(b => {
+        const is = b.dataset.tab === activeTab;
+        b.className =
+          "tab px-3 py-2 rounded-xl text-sm font-medium border " +
+          (is ? "bg-slate-900 text-white border-slate-900 shadow"
+              : "bg-white text-slate-900 border-slate-200");
+      });
+    }
+
+    function renderCustomers() {
+      const activeFirst = [...customers].sort((a,b) => (b.active === true) - (a.active === true) || (a.name||"").localeCompare(b.name||""));
+
+      content.innerHTML = activeFirst.length
+        ? activeFirst.map(c => `
+          <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm mb-3">
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <div class="font-semibold">${c.name || "Unnamed"}</div>
+                <div class="text-sm text-slate-600">${(c.address || "")} ${(c.postcode || "")}</div>
+                <div class="text-sm text-slate-600">${c.phone || ""}</div>
+                <div class="text-xs mt-2 inline-block px-2 py-1 rounded-lg ${c.active ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-slate-100 text-slate-600 border border-slate-200"}">
+                  ${c.active ? "Active" : "Disabled"}
+                </div>
+              </div>
+
+              <div class="flex flex-col gap-2 min-w-[120px]">
+                <button data-action="toggleCustomer" data-id="${c.id}" data-active="${c.active ? "1" : "0"}"
+                  class="px-3 py-2 rounded-xl text-sm font-medium border ${c.active ? "bg-white border-slate-200" : "bg-slate-900 text-white border-slate-900"}">
+                  ${c.active ? "Disable" : "Enable"}
+                </button>
+
+                <button data-action="deleteCustomer" data-id="${c.id}"
+                  class="px-3 py-2 rounded-xl text-sm font-medium border border-rose-200 bg-rose-50 text-rose-700">
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        `).join("")
+        : `<div class="p-4 rounded-2xl bg-white border border-slate-200 text-slate-600">No customers yet.</div>`;
+
+      // wire up customer buttons
+      content.querySelectorAll('[data-action="toggleCustomer"]').forEach(btn => {
+        btn.addEventListener("click", async () => {
+          const id = btn.dataset.id;
+          const active = btn.dataset.active === "1";
+          await toggleCustomerActive(id, !active);
+        });
+      });
+
+      content.querySelectorAll('[data-action="deleteCustomer"]').forEach(btn => {
+        btn.addEventListener("click", async () => {
+          const id = btn.dataset.id;
+          const ok = confirm("Delete this customer? (Jobs will remain but may show 'Unknown customer')");
+          if (!ok) return;
+          await deleteCustomer(id);
+        });
+      });
+    }
+
+    function renderJobs(list) {
+      content.innerHTML = list.length
+        ? list.map(j => {
+            const c = customers.find(x => x.id === j.customerId);
+            const addr = (c?.address || "");
+            const pc = (c?.postcode || "");
+            const paidBadge = j.paid ? `<span class="ml-2 text-xs px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200">Paid</span>` : "";
+            const status = j.status || "Due";
+
+            return `
+              <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm mb-3">
+                <div class="flex items-start justify-between gap-3">
+                  <div>
+                    <div class="text-sm text-slate-500">${j.dueDate} • ${status}${paidBadge}</div>
+                    <div class="font-semibold">${c?.name || "Unknown customer"}</div>
+                    <div class="text-sm text-slate-700 mt-1">
+                      ${j.service || "Window Clean"} • ${j.frequencyWeeks || 4} weekly •
+                      <span class="font-semibold">${pounds(j.price)}</span>
+                    </div>
+                    <div class="text-sm text-slate-600 mt-2">${addr}${pc ? ", " + pc : ""}</div>
+                    <a class="text-sm underline" target="_blank" href="${mapLink(addr, pc)}">Open in Maps</a>
+                  </div>
+
+                  <div class="flex flex-col gap-2 min-w-[120px]">
+                    <button data-action="done" data-id="${j.id}"
+                      class="px-3 py-2 rounded-xl text-sm font-medium border border-slate-200 bg-white">
+                      Done
+                    </button>
+                    <button data-action="paid" data-id="${j.id}"
+                      class="px-3 py-2 rounded-xl text-sm font-medium border border-slate-900 bg-slate-900 text-white">
+                      Paid
+                    </button>
+                    <button data-action="invoice" data-id="${j.id}"
+                      class="px-3 py-2 rounded-xl text-sm font-medium border border-slate-200 bg-slate-50">
+                      Invoice
+                    </button>
+                  </div>
+                </div>
+              </div>
+            `;
+          }).join("")
+        : `<div class="p-4 rounded-2xl bg-white border border-slate-200 text-slate-600">Nothing here.</div>`;
+
+      // wire buttons AFTER innerHTML is set
+      content.querySelectorAll('[data-action="done"]').forEach(btn => {
+        btn.addEventListener("click", async () => {
+          await markDone(btn.dataset.id);
+        });
+      });
+
+      content.querySelectorAll('[data-action="paid"]').forEach(btn => {
+        btn.addEventListener("click", async () => {
+          await markPaid(btn.dataset.id);
+        });
+      });
+
+      content.querySelectorAll('[data-action="invoice"]').forEach(btn => {
+        btn.addEventListener("click", async () => {
+          const job = jobs.find(x => x.id === btn.dataset.id);
+          const cust = customers.find(x => x.id === job?.customerId);
+          const text = makeInvoiceText(job, cust);
+          await copyToClipboard(text);
+        });
+      });
     }
 
     function render() {
-      document.querySelectorAll(".tab").forEach(b => {
-        const is = b.dataset.tab === activeTab;
-        b.className = "tab px-3 py-2 rounded-xl text-sm font-medium border " + (is
-          ? "bg-slate-900 text-white border-slate-900 shadow"
-          : "bg-white text-slate-900 border-slate-200");
-      });
+      setTabsUI();
 
       if (activeTab === "customers") {
-        content.innerHTML = customers.length
-          // wire up Done buttons
-content.querySelectorAll('[data-action="done"]').forEach(btn => {
-  btn.addEventListener("click", async () => {
-    await markDone(btn.dataset.id);
-  });
-});
-
-// wire up Paid buttons
-content.querySelectorAll('[data-action="paid"]').forEach(btn => {
-  btn.addEventListener("click", async () => {
-    await markPaid(btn.dataset.id);
-  });
-});
-
-          ? customers.map(c => `<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm mb-3">
-              <div class="font-semibold">${c.name}</div>
-              <div class="text-sm text-slate-600">${c.address || ""} ${c.postcode || ""}</div>
-              <div class="text-sm text-slate-600">${c.phone || ""}</div>
-            </div>`).join("")
-          : `<div class="p-4 rounded-2xl bg-white border border-slate-200 text-slate-600">No customers yet.</div>`;
+        renderCustomers();
         return;
       }
 
       const t = todayISO();
-      let list = jobs.filter(j => j.status !== "Completed");
+      let list = [...jobs];
+
       if (activeTab === "today") list = list.filter(j => j.dueDate === t);
       if (activeTab === "week") {
         const end = addDays(t, 6);
         list = list.filter(j => j.dueDate >= t && j.dueDate <= end);
       }
       if (activeTab === "overdue") list = list.filter(j => j.dueDate < t);
+      if (activeTab === "all") list = [...jobs];
 
-      content.innerHTML = list.length
-        ? list.sort(sortByDueDate).map(j => {
-            const c = customers.find(x => x.id === j.customerId);
-            const addr = (c?.address || ""); const pc = (c?.postcode || "");
-            return `<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm mb-3">
-              <div class="text-sm text-slate-500">${j.dueDate} • ${j.status}</div>
-              <div class="font-semibold">${c?.name || "Unknown customer"}</div>
-              <div class="text-sm text-slate-700 mt-1">${j.service} • ${j.frequencyWeeks} weekly • <span class="font-semibold">${pounds(j.price)}</span></div>
-              <div class="text-sm text-slate-600 mt-2">${addr}${pc ? ", " + pc : ""}</div>
-              <a class="text-sm underline" target="_blank" href="${mapLink(addr, pc)}">Open in Maps</a>
-            <div class="mt-3 flex gap-2">
-  <button data-action="done" data-id="${j.id}"
-    class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">
-    Done
-  </button>
+      // simple: hide completed by default unless All tab
+      if (activeTab !== "all") list = list.filter(j => (j.status || "Due") !== "Completed");
 
-  <button data-action="paid" data-id="${j.id}" ${j.paid ? "disabled" : ""}
-    class="px-3 py-2 rounded-xl bg-white text-slate-900 text-sm font-medium shadow border border-slate-200 ${j.paid ? "opacity-50" : ""}">
-    ${j.paid ? "Paid ✓" : "Paid"}
-  </button>
-</div>
-
-            </div>`;
-          }).join("")
-        : `<div class="p-4 rounded-2xl bg-white border border-slate-200 text-slate-600">Nothing here.</div>`;
+      renderJobs(list);
     }
 
+    // ---------- MODALS ----------
     function openAddCustomer() {
       openModal("Add Customer", `
         <form id="fCustomer" class="grid gap-3">
@@ -258,6 +382,7 @@ content.querySelectorAll('[data-action="paid"]').forEach(btn => {
             <label class="text-sm font-medium">Name</label>
             <input name="name" class="px-3 py-2 rounded-xl border border-slate-200" required />
           </div>
+
           <div class="grid grid-cols-2 gap-3">
             <div class="grid gap-1">
               <label class="text-sm font-medium">Phone</label>
@@ -268,10 +393,12 @@ content.querySelectorAll('[data-action="paid"]').forEach(btn => {
               <input name="email" type="email" class="px-3 py-2 rounded-xl border border-slate-200" />
             </div>
           </div>
+
           <div class="grid gap-1">
             <label class="text-sm font-medium">Address</label>
             <input name="address" class="px-3 py-2 rounded-xl border border-slate-200" />
           </div>
+
           <div class="grid grid-cols-2 gap-3">
             <div class="grid gap-1">
               <label class="text-sm font-medium">Postcode</label>
@@ -284,6 +411,7 @@ content.querySelectorAll('[data-action="paid"]').forEach(btn => {
               </select>
             </div>
           </div>
+
           <button class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">Save</button>
         </form>
       `);
@@ -299,16 +427,24 @@ content.querySelectorAll('[data-action="paid"]').forEach(btn => {
     }
 
     function openAddJob() {
-      if (!customers.length) { setNotice("Add a customer first."); activeTab = "customers"; render(); return; }
+      const activeCustomers = customers.filter(c => c.active);
+
+      if (!activeCustomers.length) {
+        setNotice("Add (or re-enable) a customer first.");
+        activeTab = "customers";
+        render();
+        return;
+      }
 
       openModal("Add Job", `
         <form id="fJob" class="grid gap-3">
           <div class="grid gap-1">
             <label class="text-sm font-medium">Customer</label>
             <select name="customerId" class="px-3 py-2 rounded-xl border border-slate-200" required>
-              ${customers.map(c => `<option value="${c.id}">${c.name}</option>`).join("")}
+              ${activeCustomers.map(c => `<option value="${c.id}">${c.name}</option>`).join("")}
             </select>
           </div>
+
           <div class="grid grid-cols-2 gap-3">
             <div class="grid gap-1">
               <label class="text-sm font-medium">Service</label>
@@ -323,6 +459,7 @@ content.querySelectorAll('[data-action="paid"]').forEach(btn => {
               </select>
             </div>
           </div>
+
           <div class="grid grid-cols-2 gap-3">
             <div class="grid gap-1">
               <label class="text-sm font-medium">Due date</label>
@@ -333,6 +470,7 @@ content.querySelectorAll('[data-action="paid"]').forEach(btn => {
               <input name="price" type="number" step="0.01" class="px-3 py-2 rounded-xl border border-slate-200" />
             </div>
           </div>
+
           <button class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">Save</button>
         </form>
       `);
@@ -341,39 +479,39 @@ content.querySelectorAll('[data-action="paid"]').forEach(btn => {
         e.preventDefault();
         const fd = new FormData(e.target);
         await createJob(Object.fromEntries(fd.entries()));
-      async function markDone(jobId) {
-  await updateDoc(doc(db, "jobs", jobId), { status: "Completed" });
-  await loadJobs();
-  render();
-}
-
-async function markPaid(jobId) {
-  await updateDoc(doc(db, "jobs", jobId), { paid: true });
-  await loadJobs();
-  render();
-}
-
         closeModal();
         activeTab = "today";
         render();
       });
     }
 
-    document.querySelectorAll(".tab").forEach(b => b.addEventListener("click", () => { activeTab = b.dataset.tab; render(); }));
-    document.getElementById("btnAddCustomer").addEventListener("click", openAddCustomer);
-    document.getElementById("btnAddJob").addEventListener("click", openAddJob);
+    // ---------- EVENTS ----------
+    document.querySelectorAll(".tab").forEach(b =>
+      b.addEventListener("click", () => { activeTab = b.dataset.tab; render(); })
+    );
+    $("btnAddCustomer").addEventListener("click", openAddCustomer);
+    $("btnAddJob").addEventListener("click", openAddJob);
+
+    // ---------- AUTH BOOT ----------
+    onAuthStateChanged(auth, async (user) => {
+      if (!user) return;
+      uid = user.uid;
+      subhead.textContent = "Ready. Synced via Firebase.";
+      await refreshAll();
+    });
+
+    async function boot() {
+      subhead.textContent = "Signing in…";
+      try {
+        await signInAnonymously(auth);
+        // onAuthStateChanged will flip it to Ready + load data
+      } catch (e) {
+        subhead.textContent = "Auth error. Check Firebase Anonymous Auth.";
+        console.error(e);
+      }
+    }
 
     boot();
   </script>
 </body>
 </html>
-
-
-
-
-
-
-
-
-
-
