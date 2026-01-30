@@ -9,7 +9,7 @@
 
 <body class="bg-slate-50 text-slate-900">
   <div class="max-w-3xl mx-auto p-4 pb-28">
-    <div class="flex items-center justify-between gap-3">
+    <div class="flex items-start justify-between gap-3">
       <div>
         <h1 class="text-2xl font-bold tracking-tight">Clearflow</h1>
         <p id="subhead" class="text-sm text-slate-500">Loading…</p>
@@ -20,10 +20,11 @@
       </div>
     </div>
 
-    <div class="mt-4 grid grid-cols-5 gap-2">
+    <div class="mt-4 grid grid-cols-6 gap-2">
       <button data-tab="today" class="tab px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">Today</button>
       <button data-tab="week" class="tab px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">Week</button>
       <button data-tab="overdue" class="tab px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">Overdue</button>
+      <button data-tab="unpaid" class="tab px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">Unpaid</button>
       <button data-tab="customers" class="tab px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">Customers</button>
       <button data-tab="all" class="tab px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">All</button>
     </div>
@@ -46,10 +47,11 @@
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
     import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-auth.js";
     import {
-      getFirestore, collection, addDoc, getDocs, query, where, orderBy, updateDoc, doc, serverTimestamp
+      getFirestore, collection, addDoc, getDocs, query, where,
+      updateDoc, doc, deleteDoc, serverTimestamp
     } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
 
-    // ✅ Your Firebase config (keep as-is)
+    // ✅ Your Firebase config
     const firebaseConfig = {
       apiKey: "AIzaSyBKFnGGCcnCq9h-w8wAmvaTeecWidfD5zg",
       authDomain: "round-runner-b497b.firebaseapp.com",
@@ -60,8 +62,10 @@
     };
 
     const SERVICES = ["Window Clean","Conservatory","Gutter Clean","Fascia + Gutters","Fascia Only"];
-    // weeks: 0=one-off, 52=12 months (same date next year)
+
+    // weeks: 0 = one-off, 52 = 12 months (same date next year)
     const FREQS = [0, 4, 8, 12, 52];
+
     const PAYMENTS = ["Cash","Bank Transfer"];
 
     const $ = (id) => document.getElementById(id);
@@ -78,29 +82,44 @@
     let customers = [];
     let jobs = [];
 
+    // ---------- Helpers ----------
     function setNotice(msg) {
       if (!msg) { notice.classList.add("hidden"); notice.textContent = ""; return; }
       notice.textContent = msg; notice.classList.remove("hidden");
     }
 
-    function todayISO(d = new Date()) {
-      const x = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-      return x.toISOString().slice(0, 10);
+    function todayISO(d) {
+      d = d || new Date();
+      const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+      const yyyy = x.getFullYear();
+      const mm = String(x.getMonth() + 1).padStart(2, "0");
+      const dd = String(x.getDate()).padStart(2, "0");
+      return `${yyyy}-${mm}-${dd}`;
     }
 
-    function addDays(iso, days) {
+    function addDaysISO(iso, days) {
       const d = new Date(iso + "T00:00:00");
       d.setDate(d.getDate() + days);
-      return d.toISOString().slice(0, 10);
+      return todayISO(d);
     }
 
-    function addMonths(iso, months) {
+    // "same date next year" / month increments
+    function addMonthsISO(iso, months) {
       const d = new Date(iso + "T00:00:00");
+      const origDay = d.getDate();
       d.setMonth(d.getMonth() + months);
-      return d.toISOString().slice(0, 10);
+
+      // if month rolled over (e.g., Feb doesn't have 30/31), clamp to last day of month
+      if (d.getDate() !== origDay) {
+        d.setDate(0); // last day of previous month
+      }
+      return todayISO(d);
     }
 
-    function pounds(n) { return "£" + Number(n || 0).toFixed(2); }
+    function pounds(n) {
+      const x = Number(n || 0);
+      return "£" + x.toFixed(2);
+    }
 
     function freqLabel(f) {
       f = Number(f);
@@ -119,40 +138,104 @@
       $("modalBody").innerHTML = bodyHtml;
       $("modalWrap").classList.remove("hidden");
     }
+
     function closeModal() {
       $("modalWrap").classList.add("hidden");
       $("modalBody").innerHTML = "";
     }
+
     $("btnCloseModal").addEventListener("click", closeModal);
     $("modalWrap").addEventListener("click", (e) => { if (e.target.id === "modalWrap") closeModal(); });
 
+    function startOfWeekMonday(d) {
+      d = d || new Date();
+      const x = new Date(d);
+      x.setHours(0,0,0,0);
+      const day = x.getDay(); // 0 Sun.. 1 Mon
+      const diff = (day === 0 ? -6 : 1 - day);
+      x.setDate(x.getDate() + diff);
+      return x;
+    }
+
+    function isFirestoreTimestamp(obj) {
+      return obj && typeof obj.toDate === "function";
+    }
+
+    function paidThisWeekTotal() {
+      const start = startOfWeekMonday().getTime();
+      let sum = 0;
+
+      for (let i = 0; i < jobs.length; i++) {
+        const j = jobs[i];
+        if (!j) continue;
+        if (j.status !== "Paid") continue;
+        if (!isFirestoreTimestamp(j.paidAt)) continue;
+        const t = j.paidAt.toDate().getTime();
+        if (t >= start) sum += Number(j.price || 0);
+      }
+
+      return sum;
+    }
+
+    function renderSubhead() {
+      // Keep it short + useful
+      const total = paidThisWeekTotal();
+      subhead.textContent = "Ready. Synced via Firebase. • Paid this week: " + pounds(total);
+    }
+
+    function sortCustomersInPlace() {
+      customers.sort((a, b) => {
+        const an = (a && a.name) ? String(a.name).toLowerCase() : "";
+        const bn = (b && b.name) ? String(b.name).toLowerCase() : "";
+        return an.localeCompare(bn);
+      });
+    }
+
+    function sortJobsInPlace() {
+      jobs.sort((a, b) => {
+        const ad = (a && a.dueDate) ? a.dueDate : "";
+        const bd = (b && b.dueDate) ? b.dueDate : "";
+        if (ad < bd) return -1;
+        if (ad > bd) return 1;
+        return 0;
+      });
+    }
+
+    function getCustomerById(id) {
+      for (let i = 0; i < customers.length; i++) {
+        if (customers[i].id === id) return customers[i];
+      }
+      return null;
+    }
+
+    // ---------- Data Load ----------
     async function loadCustomers() {
       customers = [];
-      const qy = query(
-        collection(db, "customers"),
-        where("ownerUid", "==", uid),
-        orderBy("name", "asc")
-      );
+      const qy = query(collection(db, "customers"), where("ownerUid", "==", uid));
       const snap = await getDocs(qy);
       snap.forEach(d => customers.push({ id: d.id, ...d.data() }));
+      // default active true
+      for (let i = 0; i < customers.length; i++) {
+        if (customers[i].active === undefined) customers[i].active = true;
+      }
+      sortCustomersInPlace();
     }
 
     async function loadJobs() {
       jobs = [];
-      const qy = query(
-        collection(db, "jobs"),
-        where("ownerUid", "==", uid),
-        orderBy("dueDate", "asc")
-      );
+      const qy = query(collection(db, "jobs"), where("ownerUid", "==", uid));
       const snap = await getDocs(qy);
       snap.forEach(d => jobs.push({ id: d.id, ...d.data() }));
+      sortJobsInPlace();
     }
 
     async function refreshAll() {
       await Promise.all([loadCustomers(), loadJobs()]);
+      renderSubhead();
       render();
     }
 
+    // ---------- CRUD Customers ----------
     async function createCustomer(data) {
       await addDoc(collection(db, "customers"), {
         ownerUid: uid,
@@ -162,28 +245,26 @@
         email: data.email || "",
         address: data.address || "",
         postcode: data.postcode || "",
-        notes: data.notes || "",
         preferredPayment: data.preferredPayment || "Cash",
+        notes: data.notes || "",
         createdAt: serverTimestamp()
       });
       await loadCustomers();
+      render();
     }
 
-    async function createJob(data) {
-      await addDoc(collection(db, "jobs"), {
-        ownerUid: uid,
-        customerId: data.customerId,
-        service: data.service,
-        frequencyWeeks: Number(data.frequencyWeeks),
-        price: Number(data.price || 0),
-        dueDate: data.dueDate,
-        paymentMethod: data.paymentMethod || "Cash",
-        notes: data.notes || "",
-        paid: false,
-        status: "Due",
-        createdAt: serverTimestamp()
+    async function updateCustomer(customerId, data) {
+      await updateDoc(doc(db, "customers", customerId), {
+        name: data.name || "",
+        phone: data.phone || "",
+        email: data.email || "",
+        address: data.address || "",
+        postcode: data.postcode || "",
+        preferredPayment: data.preferredPayment || "Cash",
+        notes: data.notes || ""
       });
-      await loadJobs();
+      await loadCustomers();
+      render();
     }
 
     async function setCustomerActive(customerId, isActive) {
@@ -192,177 +273,296 @@
       render();
     }
 
-    async function markPaid(jobId) {
-      await updateDoc(doc(db, "jobs", jobId), { paid: true });
+    // ---------- CRUD Jobs ----------
+    async function createJob(data) {
+      await addDoc(collection(db, "jobs"), {
+        ownerUid: uid,
+        customerId: data.customerId,
+        service: data.service || "Window Clean",
+        frequencyWeeks: Number(data.frequencyWeeks || 0),
+        price: Number(data.price || 0),
+        dueDate: data.dueDate,
+        paymentMethod: data.paymentMethod || "Cash",
+        notes: data.notes || "",
+        status: "Due",     // Due -> Unpaid -> Paid
+        paid: false,
+        createdAt: serverTimestamp()
+      });
       await loadJobs();
+      renderSubhead();
+      render();
+    }
+
+    async function updateJob(jobId, data) {
+      await updateDoc(doc(db, "jobs", jobId), {
+        customerId: data.customerId,
+        service: data.service || "Window Clean",
+        frequencyWeeks: Number(data.frequencyWeeks || 0),
+        price: Number(data.price || 0),
+        dueDate: data.dueDate,
+        paymentMethod: data.paymentMethod || "Cash",
+        notes: data.notes || ""
+      });
+      await loadJobs();
+      renderSubhead();
+      render();
+    }
+
+    async function deleteJob(jobId) {
+      const ok = confirm("Delete this job? (This cannot be undone)");
+      if (!ok) return;
+      await deleteDoc(doc(db, "jobs", jobId));
+      await loadJobs();
+      renderSubhead();
       render();
     }
 
     async function markDone(jobId) {
+      // Done means: move job to Unpaid (waiting payment), AND schedule next if recurring
       const job = jobs.find(j => j.id === jobId);
       if (!job) return;
 
-      // mark completed
-      await updateDoc(doc(db, "jobs", jobId), { status: "Completed" });
+      // Mark this job as Unpaid (work done, not paid yet)
+      await updateDoc(doc(db, "jobs", jobId), {
+        status: "Unpaid",
+        doneAt: serverTimestamp()
+      });
 
-      // auto-create next job if recurring
       const fw = Number(job.frequencyWeeks || 0);
       if (fw !== 0) {
-        let nextDue = job.dueDate || todayISO();
-        if (fw === 52) nextDue = addMonths(nextDue, 12);
-        else nextDue = addDays(nextDue, fw * 7);
+        const baseDue = job.dueDate || todayISO();
+        let nextDue = baseDue;
+
+        if (fw === 52) nextDue = addMonthsISO(baseDue, 12);
+        else nextDue = addDaysISO(baseDue, fw * 7);
 
         await addDoc(collection(db, "jobs"), {
           ownerUid: uid,
           customerId: job.customerId,
-          service: job.service,
+          service: job.service || "Window Clean",
           frequencyWeeks: fw,
           price: Number(job.price || 0),
           dueDate: nextDue,
           paymentMethod: job.paymentMethod || "Cash",
           notes: job.notes || "",
-          paid: false,
           status: "Due",
+          paid: false,
           createdAt: serverTimestamp()
         });
       }
 
       await loadJobs();
+      renderSubhead();
       render();
     }
 
+    async function markPaid(jobId) {
+      await updateDoc(doc(db, "jobs", jobId), {
+        status: "Paid",
+        paid: true,
+        paidAt: serverTimestamp()
+      });
+      await loadJobs();
+      renderSubhead();
+      render();
+    }
+
+    // ---------- Invoice ----------
     function makeInvoiceText(job, customer) {
       const name = (customer && customer.name) ? customer.name : "there";
-      const addr = [];
-      if (customer && customer.address) addr.push(customer.address);
-      if (customer && customer.postcode) addr.push(customer.postcode);
-
       const when = job && job.dueDate ? job.dueDate : "";
       const service = job && job.service ? job.service : "Window Clean";
       const price = pounds(job && job.price ? job.price : 0);
 
+      const addrParts = [];
+      if (customer && customer.address) addrParts.push(customer.address);
+      if (customer && customer.postcode) addrParts.push(customer.postcode);
+
+      const addrLine = addrParts.length ? ("Address: " + addrParts.join(", ")) : "";
+
       return (
 `Hi ${name},
 
-Just a quick one — your ${service} on ${when} is done.
+Just a quick one — your ${service} (${when}) is done.
 
-Amount: ${price}
-Address: ${addr.join(", ")}
+Amount due: ${price}
+${addrLine}
 
 Thanks,
-Clearflow`
+Lewis (Clearflow)`
       );
     }
 
     async function copyToClipboard(text) {
       try {
         await navigator.clipboard.writeText(text);
-        setNotice("Invoice text copied to clipboard ✅");
+        setNotice("Invoice message copied ✅");
         setTimeout(() => setNotice(""), 2500);
       } catch (e) {
-        setNotice("Couldn’t copy automatically. Your browser blocked it.");
+        // fallback
+        prompt("Copy this message:", text);
       }
     }
 
+    // ---------- Render ----------
+    function setTabsUI() {
+      document.querySelectorAll(".tab").forEach(b => {
+        const is = b.dataset.tab === activeTab;
+        b.className =
+          "tab px-3 py-2 rounded-xl text-sm font-medium border " +
+          (is ? "bg-slate-900 text-white border-slate-900 shadow"
+              : "bg-white text-slate-900 border-slate-200");
+      });
+    }
+
+    function jobCard(job) {
+      const c = getCustomerById(job.customerId);
+      const name = c && c.name ? c.name : "Unknown customer";
+      const addr = c && c.address ? c.address : "";
+      const pc = c && c.postcode ? c.postcode : "";
+      const fullAddr = addr + (pc ? (", " + pc) : "");
+
+      const status = job.status || "Due";
+      const paidBadge = (status === "Paid") ? `<span class="ml-2 text-xs px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200">Paid</span>` : "";
+      const unpaidBadge = (status === "Unpaid") ? `<span class="ml-2 text-xs px-2 py-1 rounded-lg bg-amber-50 text-amber-800 border border-amber-200">Unpaid</span>` : "";
+
+      const notesHtml = job.notes ? `<div class="text-sm text-slate-500 mt-2 whitespace-pre-wrap">${job.notes}</div>` : "";
+
+      // Buttons depend on state
+      let buttons = "";
+
+      if (status === "Due") {
+        buttons = `
+          <button data-action="done" data-id="${job.id}" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">Done</button>
+          <button data-action="editJob" data-id="${job.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Edit</button>
+          <button data-action="deleteJob" data-id="${job.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Delete</button>
+          <button data-action="invoice" data-id="${job.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Invoice</button>
+        `;
+      } else if (status === "Unpaid") {
+        buttons = `
+          <button data-action="paid" data-id="${job.id}" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">Paid</button>
+          <button data-action="editJob" data-id="${job.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Edit</button>
+          <button data-action="deleteJob" data-id="${job.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Delete</button>
+          <button data-action="invoice" data-id="${job.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Invoice</button>
+        `;
+      } else {
+        // Paid (only really seen in All)
+        buttons = `
+          <button data-action="editJob" data-id="${job.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Edit</button>
+          <button data-action="deleteJob" data-id="${job.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Delete</button>
+          <button data-action="invoice" data-id="${job.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Invoice</button>
+        `;
+      }
+
+      return `
+        <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm mb-3">
+          <div class="text-sm text-slate-500">${job.dueDate || ""} • ${status}${paidBadge}${unpaidBadge}</div>
+          <div class="font-semibold">${name}</div>
+          <div class="text-sm text-slate-700 mt-1">
+            ${(job.service || "")} • ${freqLabel(job.frequencyWeeks)} •
+            <span class="font-semibold">${pounds(job.price)}</span>
+          </div>
+          <div class="text-sm text-slate-600 mt-2">${fullAddr}</div>
+          <a class="text-sm underline" target="_blank" href="${mapLink(addr, pc)}">Open in Maps</a>
+          ${notesHtml}
+          <div class="mt-3 flex flex-wrap gap-2">${buttons}</div>
+        </div>
+      `;
+    }
+
     function renderCustomers() {
-      const list = customers.slice();
+      // Active first
+      const list = customers.slice().sort((a, b) => {
+        const aa = (a.active !== false) ? 1 : 0;
+        const bb = (b.active !== false) ? 1 : 0;
+        if (aa !== bb) return bb - aa;
+        const an = a.name ? String(a.name).toLowerCase() : "";
+        const bn = b.name ? String(b.name).toLowerCase() : "";
+        return an.localeCompare(bn);
+      });
 
-      content.innerHTML = list.length
-        ? list.map(c => {
-            const isActive = (c.active !== false);
-            return `
-              <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm mb-3 ${isActive ? "" : "opacity-60"}">
-                <div class="flex items-start justify-between gap-3">
-                  <div>
-                    <div class="font-semibold">${c.name || ""}</div>
-                    <div class="text-sm text-slate-600">${(c.address || "")}${c.postcode ? " " + c.postcode : ""}</div>
-                    <div class="text-sm text-slate-600">${c.phone || ""}</div>
-                    ${c.notes ? `<div class="text-sm text-slate-500 mt-2 whitespace-pre-wrap">${c.notes}</div>` : ""}
-                  </div>
-                  <div class="flex gap-2">
-                    ${isActive
-                      ? `<button data-action="disableCustomer" data-id="${c.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Disable</button>`
-                      : `<button data-action="enableCustomer" data-id="${c.id}" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">Enable</button>`
-                    }
-                  </div>
-                </div>
+      if (!list.length) {
+        content.innerHTML = `<div class="p-4 rounded-2xl bg-white border border-slate-200 text-slate-600">No customers yet.</div>`;
+        return;
+      }
+
+      content.innerHTML = list.map(c => {
+        const isActive = (c.active !== false);
+        const badge = isActive
+          ? `<span class="ml-2 text-xs px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200">Active</span>`
+          : `<span class="ml-2 text-xs px-2 py-1 rounded-lg bg-slate-100 text-slate-700 border border-slate-200">Disabled</span>`;
+
+        const notesHtml = c.notes ? `<div class="text-sm text-slate-500 mt-2 whitespace-pre-wrap">${c.notes}</div>` : "";
+
+        return `
+          <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm mb-3 ${isActive ? "" : "opacity-70"}">
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <div class="font-semibold">${c.name || "Unnamed"} ${badge}</div>
+                <div class="text-sm text-slate-600">${(c.address || "")}${c.postcode ? " " + c.postcode : ""}</div>
+                <div class="text-sm text-slate-600">${c.phone || ""}</div>
+                ${notesHtml}
               </div>
-            `;
-          }).join("")
-        : `<div class="p-4 rounded-2xl bg-white border border-slate-200 text-slate-600">No customers yet.</div>`;
+              <div class="flex flex-col gap-2">
+                <button data-action="editCustomer" data-id="${c.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Edit</button>
+                ${
+                  isActive
+                    ? `<button data-action="disableCustomer" data-id="${c.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Disable</button>`
+                    : `<button data-action="enableCustomer" data-id="${c.id}" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">Enable</button>`
+                }
+              </div>
+            </div>
+          </div>
+        `;
+      }).join("");
 
-      // wire customer buttons
+      // wire customer actions
       content.querySelectorAll('[data-action="disableCustomer"]').forEach(btn => {
-        btn.addEventListener("click", async () => {
-          await setCustomerActive(btn.dataset.id, false);
-        });
+        btn.addEventListener("click", async () => setCustomerActive(btn.dataset.id, false));
       });
       content.querySelectorAll('[data-action="enableCustomer"]').forEach(btn => {
+        btn.addEventListener("click", async () => setCustomerActive(btn.dataset.id, true));
+      });
+      content.querySelectorAll('[data-action="editCustomer"]').forEach(btn => {
+        btn.addEventListener("click", () => openEditCustomer(btn.dataset.id));
+      });
+    }
+
+    function wireJobButtons() {
+      content.querySelectorAll('[data-action="done"]').forEach(btn => {
+        btn.addEventListener("click", async () => markDone(btn.dataset.id));
+      });
+      content.querySelectorAll('[data-action="paid"]').forEach(btn => {
+        btn.addEventListener("click", async () => markPaid(btn.dataset.id));
+      });
+      content.querySelectorAll('[data-action="invoice"]').forEach(btn => {
         btn.addEventListener("click", async () => {
-          await setCustomerActive(btn.dataset.id, true);
+          const job = jobs.find(j => j.id === btn.dataset.id);
+          const cust = job ? getCustomerById(job.customerId) : null;
+          const txt = makeInvoiceText(job, cust);
+          await copyToClipboard(txt);
         });
+      });
+      content.querySelectorAll('[data-action="editJob"]').forEach(btn => {
+        btn.addEventListener("click", () => openEditJob(btn.dataset.id));
+      });
+      content.querySelectorAll('[data-action="deleteJob"]').forEach(btn => {
+        btn.addEventListener("click", async () => deleteJob(btn.dataset.id));
       });
     }
 
     function renderJobs(list) {
-      content.innerHTML = list.length
-        ? list.map(j => {
-            const c = customers.find(x => x.id === j.customerId) || null;
-            const addr = c ? (c.address || "") : "";
-            const pc = c ? (c.postcode || "") : "";
-
-            const paidBadge = j.paid ? `<span class="ml-2 text-xs px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200">Paid</span>` : "";
-            const status = j.status || "Due";
-
-            return `
-              <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm mb-3">
-                <div class="text-sm text-slate-500">${j.dueDate || ""} • ${status} ${paidBadge}</div>
-                <div class="font-semibold">${c ? (c.name || "Customer") : "Unknown customer"}</div>
-                <div class="text-sm text-slate-700 mt-1">${(j.service || "")} • ${freqLabel(j.frequencyWeeks)} • <span class="font-semibold">${pounds(j.price)}</span></div>
-                <div class="text-sm text-slate-600 mt-2">${addr}${pc ? ", " + pc : ""}</div>
-                <a class="text-sm underline" target="_blank" href="${mapLink(addr, pc)}">Open in Maps</a>
-
-                ${j.notes ? `<div class="text-sm text-slate-500 mt-2 whitespace-pre-wrap">${j.notes}</div>` : ""}
-
-                <div class="mt-3 flex flex-wrap gap-2">
-                  <button data-action="done" data-id="${j.id}" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">Done</button>
-                  <button data-action="paid" data-id="${j.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Paid</button>
-                  <button data-action="invoice" data-id="${j.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Invoice</button>
-                </div>
-              </div>
-            `;
-          }).join("")
-        : `<div class="p-4 rounded-2xl bg-white border border-slate-200 text-slate-600">Nothing here.</div>`;
-
-      // wire job buttons
-      content.querySelectorAll('[data-action="done"]').forEach(btn => {
-        btn.addEventListener("click", async () => {
-          await markDone(btn.dataset.id);
-        });
-      });
-      content.querySelectorAll('[data-action="paid"]').forEach(btn => {
-        btn.addEventListener("click", async () => {
-          await markPaid(btn.dataset.id);
-        });
-      });
-      content.querySelectorAll('[data-action="invoice"]').forEach(btn => {
-        btn.addEventListener("click", async () => {
-          const job = jobs.find(x => x.id === btn.dataset.id);
-          if (!job) return;
-          const cust = customers.find(x => x.id === job.customerId) || null;
-          const text = makeInvoiceText(job, cust);
-          await copyToClipboard(text);
-        });
-      });
+      if (!list.length) {
+        content.innerHTML = `<div class="p-4 rounded-2xl bg-white border border-slate-200 text-slate-600">Nothing here.</div>`;
+        return;
+      }
+      content.innerHTML = list.map(jobCard).join("");
+      wireJobButtons();
     }
 
     function render() {
-      document.querySelectorAll(".tab").forEach(b => {
-        const is = b.dataset.tab === activeTab;
-        b.className = "tab px-3 py-2 rounded-xl text-sm font-medium border " + (is
-          ? "bg-slate-900 text-white border-slate-900 shadow"
-          : "bg-white text-slate-900 border-slate-200");
-      });
+      setTabsUI();
+      renderSubhead();
 
       if (activeTab === "customers") {
         renderCustomers();
@@ -370,25 +570,46 @@ Clearflow`
       }
 
       const t = todayISO();
-      let list = jobs.filter(j => (j.status || "Due") !== "Completed");
+      const weekEnd = addDaysISO(t, 6);
 
-      if (activeTab === "today") list = list.filter(j => j.dueDate === t);
-      if (activeTab === "week") {
-        const end = addDays(t, 6);
-        list = list.filter(j => j.dueDate >= t && j.dueDate <= end);
+      // Base: in day-to-day tabs, hide Paid
+      let list = jobs.slice();
+
+      if (activeTab !== "all") {
+        list = list.filter(j => j.status !== "Paid");
       }
-      if (activeTab === "overdue") list = list.filter(j => j.dueDate < t);
-      if (activeTab === "all") list = jobs.slice();
 
-      // Hide jobs for disabled customers? (optional)
-      // list = list.filter(j => {
-      //   const c = customers.find(x => x.id === j.customerId);
-      //   return !c || c.active !== false;
-      // });
+      if (activeTab === "unpaid") {
+        list = list.filter(j => j.status === "Unpaid");
+        sortJobsInPlace();
+        renderJobs(list);
+        return;
+      }
+
+      // Today/Week/Overdue: show only Due jobs
+      if (activeTab === "today") {
+        list = list.filter(j => j.status === "Due" && j.dueDate === t);
+      } else if (activeTab === "week") {
+        list = list.filter(j => j.status === "Due" && j.dueDate >= t && j.dueDate <= weekEnd);
+      } else if (activeTab === "overdue") {
+        list = list.filter(j => j.status === "Due" && j.dueDate < t);
+      } else if (activeTab === "all") {
+        // show everything
+      }
+
+      // Sort by due date
+      list.sort((a, b) => {
+        const ad = a.dueDate || "";
+        const bd = b.dueDate || "";
+        if (ad < bd) return -1;
+        if (ad > bd) return 1;
+        return 0;
+      });
 
       renderJobs(list);
     }
 
+    // ---------- Forms ----------
     function openAddCustomer() {
       openModal("Add Customer", `
         <form id="fCustomer" class="grid gap-3">
@@ -428,7 +649,7 @@ Clearflow`
 
           <div class="grid gap-1">
             <label class="text-sm font-medium">Notes</label>
-            <textarea name="notes" rows="3" class="px-3 py-2 rounded-xl border border-slate-200" placeholder="Gate code, dog, best time, etc"></textarea>
+            <textarea name="notes" rows="3" class="px-3 py-2 rounded-xl border border-slate-200" placeholder="Gate code, dog, best time…"></textarea>
           </div>
 
           <button class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">Save</button>
@@ -445,11 +666,69 @@ Clearflow`
       });
     }
 
+    function openEditCustomer(customerId) {
+      const c = getCustomerById(customerId);
+      if (!c) return;
+
+      openModal("Edit Customer", `
+        <form id="fEditCustomer" class="grid gap-3">
+          <div class="grid gap-1">
+            <label class="text-sm font-medium">Name</label>
+            <input name="name" value="${(c.name || "").replace(/"/g, "&quot;")}" class="px-3 py-2 rounded-xl border border-slate-200" required />
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <div class="grid gap-1">
+              <label class="text-sm font-medium">Phone</label>
+              <input name="phone" value="${(c.phone || "").replace(/"/g, "&quot;")}" class="px-3 py-2 rounded-xl border border-slate-200" />
+            </div>
+            <div class="grid gap-1">
+              <label class="text-sm font-medium">Email</label>
+              <input name="email" type="email" value="${(c.email || "").replace(/"/g, "&quot;")}" class="px-3 py-2 rounded-xl border border-slate-200" />
+            </div>
+          </div>
+
+          <div class="grid gap-1">
+            <label class="text-sm font-medium">Address</label>
+            <input name="address" value="${(c.address || "").replace(/"/g, "&quot;")}" class="px-3 py-2 rounded-xl border border-slate-200" />
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <div class="grid gap-1">
+              <label class="text-sm font-medium">Postcode</label>
+              <input name="postcode" value="${(c.postcode || "").replace(/"/g, "&quot;")}" class="px-3 py-2 rounded-xl border border-slate-200" />
+            </div>
+            <div class="grid gap-1">
+              <label class="text-sm font-medium">Payment</label>
+              <select name="preferredPayment" class="px-3 py-2 rounded-xl border border-slate-200">
+                ${PAYMENTS.map(p => `<option ${((c.preferredPayment || "Cash") === p) ? "selected" : ""}>${p}</option>`).join("")}
+              </select>
+            </div>
+          </div>
+
+          <div class="grid gap-1">
+            <label class="text-sm font-medium">Notes</label>
+            <textarea name="notes" rows="3" class="px-3 py-2 rounded-xl border border-slate-200">${c.notes || ""}</textarea>
+          </div>
+
+          <button class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">Save</button>
+        </form>
+      `);
+
+      document.getElementById("fEditCustomer").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const fd = new FormData(e.target);
+        await updateCustomer(customerId, Object.fromEntries(fd.entries()));
+        closeModal();
+        render();
+      });
+    }
+
     function openAddJob() {
       const activeCustomers = customers.filter(c => c.active !== false);
 
       if (!activeCustomers.length) {
-        setNotice("Add a customer first.");
+        setNotice("Add a customer first (or enable one).");
         activeTab = "customers";
         render();
         return;
@@ -509,24 +788,82 @@ Clearflow`
       });
     }
 
-    // TAB + BUTTON WIRING
-    document.querySelectorAll(".tab").forEach(b => b.addEventListener("click", () => {
-      activeTab = b.dataset.tab;
-      render();
-    }));
+    function openEditJob(jobId) {
+      const j = jobs.find(x => x.id === jobId);
+      if (!j) return;
+
+      // allow selecting any customer (including disabled) so you can fix mistakes
+      const allCustomers = customers.slice();
+
+      openModal("Edit Job", `
+        <form id="fEditJob" class="grid gap-3">
+          <div class="grid gap-1">
+            <label class="text-sm font-medium">Customer</label>
+            <select name="customerId" class="px-3 py-2 rounded-xl border border-slate-200" required>
+              ${allCustomers.map(c => `<option value="${c.id}" ${(j.customerId === c.id) ? "selected" : ""}>${c.name}</option>`).join("")}
+            </select>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <div class="grid gap-1">
+              <label class="text-sm font-medium">Service</label>
+              <select name="service" class="px-3 py-2 rounded-xl border border-slate-200">
+                ${SERVICES.map(s => `<option ${(j.service === s) ? "selected" : ""}>${s}</option>`).join("")}
+              </select>
+            </div>
+            <div class="grid gap-1">
+              <label class="text-sm font-medium">Frequency</label>
+              <select name="frequencyWeeks" class="px-3 py-2 rounded-xl border border-slate-200">
+                ${FREQS.map(f => `<option value="${f}" ${(Number(j.frequencyWeeks) === Number(f)) ? "selected" : ""}>${freqLabel(f)}</option>`).join("")}
+              </select>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <div class="grid gap-1">
+              <label class="text-sm font-medium">Due date</label>
+              <input name="dueDate" type="date" class="px-3 py-2 rounded-xl border border-slate-200" value="${j.dueDate || todayISO()}" />
+            </div>
+            <div class="grid gap-1">
+              <label class="text-sm font-medium">Price (£)</label>
+              <input name="price" type="number" step="0.01" class="px-3 py-2 rounded-xl border border-slate-200" value="${Number(j.price || 0)}" />
+            </div>
+          </div>
+
+          <div class="grid gap-1">
+            <label class="text-sm font-medium">Notes</label>
+            <textarea name="notes" rows="3" class="px-3 py-2 rounded-xl border border-slate-200">${j.notes || ""}</textarea>
+          </div>
+
+          <button class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">Save</button>
+        </form>
+      `);
+
+      document.getElementById("fEditJob").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const fd = new FormData(e.target);
+        await updateJob(jobId, Object.fromEntries(fd.entries()));
+        closeModal();
+      });
+    }
+
+    // ---------- Events ----------
+    document.querySelectorAll(".tab").forEach(b =>
+      b.addEventListener("click", () => { activeTab = b.dataset.tab; render(); })
+    );
+
     $("btnAddCustomer").addEventListener("click", openAddCustomer);
     $("btnAddJob").addEventListener("click", openAddJob);
 
-    // AUTH: only show "Ready" once auth state is live
+    // ---------- Auth Boot ----------
     onAuthStateChanged(auth, async (user) => {
       if (!user) return;
       uid = user.uid;
-      subhead.textContent = "Ready. Synced via Firebase.";
       await refreshAll();
     });
 
     async function boot() {
-      subhead.textContent = "Signing in...";
+      subhead.textContent = "Signing in…";
       try {
         await signInAnonymously(auth);
       } catch (e) {
