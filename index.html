@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Clearflow</title>
+  <title>Clearflow V2</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 
 <body class="bg-slate-50 text-slate-900">
-  <div class="max-w-3xl mx-auto p-4 pb-28">
+  <div class="max-w-4xl mx-auto p-4 pb-28">
     <div class="flex items-start justify-between gap-3">
       <div>
         <h1 class="text-2xl font-bold tracking-tight">Clearflow</h1>
@@ -20,13 +20,14 @@
       </div>
     </div>
 
-    <div class="mt-4 grid grid-cols-7 gap-2">
+    <div class="mt-4 flex flex-wrap gap-2">
       <button data-tab="today" class="tab px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">Today</button>
       <button data-tab="week" class="tab px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">Week</button>
       <button data-tab="overdue" class="tab px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">Overdue</button>
       <button data-tab="unpaid" class="tab px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">Unpaid</button>
       <button data-tab="calendar" class="tab px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">Calendar</button>
       <button data-tab="customers" class="tab px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">Customers</button>
+      <button data-tab="rounds" class="tab px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">Rounds</button>
       <button data-tab="all" class="tab px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">All</button>
     </div>
 
@@ -34,13 +35,13 @@
     <div class="mt-4" id="content"></div>
   </div>
 
-  <div id="modalWrap" class="hidden fixed inset-0 bg-black/40 p-4">
-    <div class="max-w-xl mx-auto bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden">
-      <div class="p-4 border-b border-slate-200 flex items-center justify-between">
+  <div id="modalWrap" class="hidden fixed inset-0 bg-black/40 p-4 z-50">
+    <div class="max-w-2xl mx-auto bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden max-h-[90vh] flex flex-col">
+      <div class="p-4 border-b border-slate-200 flex items-center justify-between shrink-0">
         <div class="font-semibold" id="modalTitle">Modal</div>
-        <button id="btnCloseModal" class="px-2 py-1 rounded-lg hover:bg-slate-100">✕</button>
+        <button id="btnCloseModal" class="px-2 py-1 rounded-lg hover:bg-slate-100 text-2xl leading-none">×</button>
       </div>
-      <div class="p-4" id="modalBody"></div>
+      <div class="p-4 overflow-auto" id="modalBody"></div>
     </div>
   </div>
 
@@ -52,7 +53,7 @@
       updateDoc, doc, deleteDoc, serverTimestamp
     } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
 
-    // ✅ Your Firebase config
+    // Firebase config
     const firebaseConfig = {
       apiKey: "AIzaSyBKFnGGCcnCq9h-w8wAmvaTeecWidfD5zg",
       authDomain: "round-runner-b497b.firebaseapp.com",
@@ -63,7 +64,6 @@
     };
 
     const SERVICES = ["Window Clean","Conservatory","Gutter Clean","Fascia + Gutters","Fascia Only"];
-    // weeks: 0 = one-off, 52 = 12 months (same date next year)
     const FREQS = [0, 4, 8, 12, 52];
     const PAYMENTS = ["Cash","Bank Transfer"];
 
@@ -80,29 +80,45 @@
     let activeTab = "today";
     let customers = [];
     let jobs = [];
+    let rounds = [];
 
-    // calendar state
     let calYear = new Date().getFullYear();
-    let calMonth = new Date().getMonth(); // 0-11
+    let calMonth = new Date().getMonth();
 
-    // ---------- Helpers ----------
     function setNotice(msg) {
-      if (!msg) { notice.classList.add("hidden"); notice.textContent = ""; return; }
-      notice.textContent = msg; notice.classList.remove("hidden");
+      if (!msg) {
+        notice.classList.add("hidden");
+        notice.textContent = "";
+        return;
+      }
+      notice.textContent = msg;
+      notice.classList.remove("hidden");
     }
 
-    function safeText(s){
-      return String(s || "").replace(/[&<>"']/g, c => ({
-        "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
-      }[c]));
+    function escHtml(s) {
+      return String(s || "").replace(/[&<>"']/g, function(c) {
+        return {
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&#39;"
+        }[c];
+      });
     }
 
-    function pad2(n){ return String(n).padStart(2, "0"); }
+    function escAttr(s) {
+      return escHtml(s);
+    }
+
+    function pad2(n) {
+      return String(n).padStart(2, "0");
+    }
 
     function todayISO(d) {
       d = d || new Date();
       const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-      return `${x.getFullYear()}-${pad2(x.getMonth()+1)}-${pad2(x.getDate())}`;
+      return x.getFullYear() + "-" + pad2(x.getMonth() + 1) + "-" + pad2(x.getDate());
     }
 
     function addDaysISO(iso, days) {
@@ -111,20 +127,18 @@
       return todayISO(d);
     }
 
-    // Adds months with clamp: if day doesn't exist in target month, uses last day of month
     function addMonthsISO(iso, months) {
       const d = new Date(iso + "T00:00:00");
-      const origDay = d.getDate();
+      const originalDay = d.getDate();
       d.setMonth(d.getMonth() + months);
-      if (d.getDate() !== origDay) {
+      if (d.getDate() !== originalDay) {
         d.setDate(0);
       }
       return todayISO(d);
     }
 
     function pounds(n) {
-      const x = Number(n || 0);
-      return "£" + x.toFixed(2);
+      return "£" + Number(n || 0).toFixed(2);
     }
 
     function freqLabel(f) {
@@ -139,46 +153,55 @@
       return "https://www.google.com/maps/search/?api=1&query=" + q;
     }
 
-    function openModal(title, bodyHtml) {
-      $("modalTitle").textContent = title;
-      $("modalBody").innerHTML = bodyHtml;
-      $("modalWrap").classList.remove("hidden");
+    function monthName(m) {
+      return ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][m];
     }
 
-    function closeModal() {
-      $("modalWrap").classList.add("hidden");
-      $("modalBody").innerHTML = "";
+    function startOfMonthDow(y, m) {
+      const dow = new Date(y, m, 1).getDay(); // 0 Sun
+      return dow === 0 ? 6 : dow - 1; // Monday based
     }
 
-    $("btnCloseModal").addEventListener("click", closeModal);
-    $("modalWrap").addEventListener("click", (e) => { if (e.target.id === "modalWrap") closeModal(); });
+    function daysInMonth(y, m) {
+      return new Date(y, m + 1, 0).getDate();
+    }
+
+    function isoFromYMD(y, m, d) {
+      return y + "-" + pad2(m + 1) + "-" + pad2(d);
+    }
 
     function startOfWeekMonday(d) {
       d = d || new Date();
       const x = new Date(d);
-      x.setHours(0,0,0,0);
-      const day = x.getDay(); // 0 Sun.. 1 Mon
-      const diff = (day === 0 ? -6 : 1 - day);
+      x.setHours(0, 0, 0, 0);
+      const day = x.getDay();
+      const diff = day === 0 ? -6 : 1 - day;
       x.setDate(x.getDate() + diff);
       return x;
     }
 
-    function isFirestoreTimestamp(obj) {
-      return obj && typeof obj.toDate === "function";
+    function isFirestoreTimestamp(v) {
+      return v && typeof v.toDate === "function";
+    }
+
+    function effectiveStatus(job) {
+      // supports older "Completed" data by treating it like Unpaid
+      if (!job || !job.status) return "Due";
+      if (job.status === "Completed") return "Unpaid";
+      return job.status;
     }
 
     function paidThisWeekTotal() {
       const start = startOfWeekMonday().getTime();
-      let sum = 0;
+      let total = 0;
       for (let i = 0; i < jobs.length; i++) {
         const j = jobs[i];
         if (!j) continue;
-        if (j.status !== "Paid") continue;
+        if (effectiveStatus(j) !== "Paid") continue;
         if (!isFirestoreTimestamp(j.paidAt)) continue;
-        const t = j.paidAt.toDate().getTime();
-        if (t >= start) sum += Number(j.price || 0);
+        if (j.paidAt.toDate().getTime() >= start) total += Number(j.price || 0);
       }
-      return sum;
+      return total;
     }
 
     function renderSubhead() {
@@ -186,17 +209,25 @@
     }
 
     function sortCustomersInPlace() {
-      customers.sort((a, b) => {
-        const an = (a && a.name) ? String(a.name).toLowerCase() : "";
-        const bn = (b && b.name) ? String(b.name).toLowerCase() : "";
+      customers.sort(function(a, b) {
+        const an = String((a && a.name) || "").toLowerCase();
+        const bn = String((b && b.name) || "").toLowerCase();
+        return an.localeCompare(bn);
+      });
+    }
+
+    function sortRoundsInPlace() {
+      rounds.sort(function(a, b) {
+        const an = String((a && a.name) || "").toLowerCase();
+        const bn = String((b && b.name) || "").toLowerCase();
         return an.localeCompare(bn);
       });
     }
 
     function sortJobsByDue(list) {
-      list.sort((a, b) => {
-        const ad = (a && a.dueDate) ? a.dueDate : "";
-        const bd = (b && b.dueDate) ? b.dueDate : "";
+      list.sort(function(a, b) {
+        const ad = String((a && a.dueDate) || "");
+        const bd = String((b && b.dueDate) || "");
         if (ad < bd) return -1;
         if (ad > bd) return 1;
         return 0;
@@ -211,45 +242,69 @@
       return null;
     }
 
-    // ---------- Calendar helpers ----------
-    function isoFromYMD(y, m, d){
-      return `${y}-${pad2(m+1)}-${pad2(d)}`;
-    }
-
-    function monthName(m){
-      return ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][m];
-    }
-
-    function startOfMonthDow(y, m){
-      // Monday-based: 0=Mon..6=Sun
-      const dow = new Date(y, m, 1).getDay(); // 0 Sun..6 Sat
-      return (dow === 0) ? 6 : dow - 1;
-    }
-
-    function daysInMonth(y, m){
-      return new Date(y, m + 1, 0).getDate();
-    }
-
-    // Calendar shows Due + Unpaid, hides Paid
-    function jobsOnDate(iso){
-      const out = [];
-      for (let i = 0; i < jobs.length; i++) {
-        const j = jobs[i];
-        if (!j) continue;
-        if (j.dueDate !== iso) continue;
-        if (j.status === "Paid") continue;
-        if (j.status !== "Due" && j.status !== "Unpaid") continue;
-        out.push(j);
+    function getRoundById(id) {
+      for (let i = 0; i < rounds.length; i++) {
+        if (rounds[i].id === id) return rounds[i];
       }
-      return out;
+      return null;
     }
 
-    // ---------- Data Load ----------
+    function getNextJobForCustomer(customerId) {
+      const today = todayISO();
+      const list = jobs.filter(function(j) {
+        const st = effectiveStatus(j);
+        return j.customerId === customerId && st !== "Paid" && j.dueDate >= today;
+      });
+      sortJobsByDue(list);
+      return list.length ? list[0] : null;
+    }
+
+    function getFutureJobsForRound(roundId, excludeJobId) {
+      const today = todayISO();
+      const list = jobs.filter(function(j) {
+        const st = effectiveStatus(j);
+        if (excludeJobId && j.id === excludeJobId) return false;
+        return j.roundId === roundId && st !== "Paid" && j.dueDate >= today;
+      });
+      sortJobsByDue(list);
+      return list;
+    }
+
+    function getNextDateForRound(roundId, excludeJobId) {
+      const list = getFutureJobsForRound(roundId, excludeJobId);
+      return list.length ? list[0].dueDate : "";
+    }
+
+    function jobsOnDate(iso) {
+      return jobs.filter(function(j) {
+        const st = effectiveStatus(j);
+        return j.dueDate === iso && (st === "Due" || st === "Unpaid");
+      });
+    }
+
+    function openModal(title, bodyHtml) {
+      $("modalTitle").textContent = title;
+      $("modalBody").innerHTML = bodyHtml;
+      $("modalWrap").classList.remove("hidden");
+    }
+
+    function closeModal() {
+      $("modalWrap").classList.add("hidden");
+      $("modalBody").innerHTML = "";
+    }
+
+    $("btnCloseModal").addEventListener("click", closeModal);
+    $("modalWrap").addEventListener("click", function(e) {
+      if (e.target.id === "modalWrap") closeModal();
+    });
+
     async function loadCustomers() {
       customers = [];
       const qy = query(collection(db, "customers"), where("ownerUid", "==", uid));
       const snap = await getDocs(qy);
-      snap.forEach(d => customers.push({ id: d.id, ...d.data() }));
+      snap.forEach(function(d) {
+        customers.push({ id: d.id, ...d.data() });
+      });
       for (let i = 0; i < customers.length; i++) {
         if (customers[i].active === undefined) customers[i].active = true;
       }
@@ -260,16 +315,58 @@
       jobs = [];
       const qy = query(collection(db, "jobs"), where("ownerUid", "==", uid));
       const snap = await getDocs(qy);
-      snap.forEach(d => jobs.push({ id: d.id, ...d.data() }));
+      snap.forEach(function(d) {
+        jobs.push({ id: d.id, ...d.data() });
+      });
+    }
+
+    async function loadRounds() {
+      rounds = [];
+      const qy = query(collection(db, "rounds"), where("ownerUid", "==", uid));
+      const snap = await getDocs(qy);
+      snap.forEach(function(d) {
+        rounds.push({ id: d.id, ...d.data() });
+      });
+      sortRoundsInPlace();
     }
 
     async function refreshAll() {
-      await Promise.all([loadCustomers(), loadJobs()]);
+      await Promise.all([loadCustomers(), loadJobs(), loadRounds()]);
       renderSubhead();
       render();
     }
 
-    // ---------- CRUD Customers ----------
+    async function createRound(data) {
+      await addDoc(collection(db, "rounds"), {
+        ownerUid: uid,
+        name: data.name || "",
+        color: data.color || "#0f172a",
+        createdAt: serverTimestamp()
+      });
+      await loadRounds();
+      render();
+    }
+
+    async function deleteRound(roundId) {
+      const ok = confirm("Delete this round? Customers/jobs will keep working, but the round will be blank.");
+      if (!ok) return;
+
+      // clear from customers
+      const custs = customers.filter(function(c) { return c.roundId === roundId; });
+      for (let i = 0; i < custs.length; i++) {
+        await updateDoc(doc(db, "customers", custs[i].id), { roundId: "" });
+      }
+
+      // clear from jobs
+      const js = jobs.filter(function(j) { return j.roundId === roundId; });
+      for (let i = 0; i < js.length; i++) {
+        await updateDoc(doc(db, "jobs", js[i].id), { roundId: "" });
+      }
+
+      await deleteDoc(doc(db, "rounds", roundId));
+      await refreshAll();
+    }
+
     async function createCustomer(data) {
       await addDoc(collection(db, "customers"), {
         ownerUid: uid,
@@ -281,6 +378,7 @@
         postcode: data.postcode || "",
         preferredPayment: data.preferredPayment || "Cash",
         notes: data.notes || "",
+        roundId: data.roundId || "",
         createdAt: serverTimestamp()
       });
       await loadCustomers();
@@ -295,7 +393,8 @@
         address: data.address || "",
         postcode: data.postcode || "",
         preferredPayment: data.preferredPayment || "Cash",
-        notes: data.notes || ""
+        notes: data.notes || "",
+        roundId: data.roundId || ""
       });
       await loadCustomers();
       render();
@@ -307,18 +406,18 @@
       render();
     }
 
-    // ---------- CRUD Jobs ----------
     async function createJob(data) {
       await addDoc(collection(db, "jobs"), {
         ownerUid: uid,
         customerId: data.customerId,
+        roundId: data.roundId || "",
         service: data.service || "Window Clean",
         frequencyWeeks: Number(data.frequencyWeeks || 0),
         price: Number(data.price || 0),
         dueDate: data.dueDate,
         paymentMethod: data.paymentMethod || "Cash",
         notes: data.notes || "",
-        status: "Due",     // Due -> Unpaid -> Paid
+        status: "Due",
         paid: false,
         createdAt: serverTimestamp()
       });
@@ -330,6 +429,7 @@
     async function updateJob(jobId, data) {
       await updateDoc(doc(db, "jobs", jobId), {
         customerId: data.customerId,
+        roundId: data.roundId || "",
         service: data.service || "Window Clean",
         frequencyWeeks: Number(data.frequencyWeeks || 0),
         price: Number(data.price || 0),
@@ -343,7 +443,7 @@
     }
 
     async function deleteJob(jobId) {
-      const ok = confirm("Delete this job? (This cannot be undone)");
+      const ok = confirm("Delete this job?");
       if (!ok) return;
       await deleteDoc(doc(db, "jobs", jobId));
       await loadJobs();
@@ -352,7 +452,6 @@
     }
 
     async function markDone(jobId) {
-      // Done: move job to Unpaid + schedule next if recurring
       let job = null;
       for (let i = 0; i < jobs.length; i++) {
         if (jobs[i].id === jobId) { job = jobs[i]; break; }
@@ -368,13 +467,13 @@
       if (fw !== 0) {
         const baseDue = job.dueDate || todayISO();
         let nextDue = baseDue;
-
         if (fw === 52) nextDue = addMonthsISO(baseDue, 12);
         else nextDue = addDaysISO(baseDue, fw * 7);
 
         await addDoc(collection(db, "jobs"), {
           ownerUid: uid,
           customerId: job.customerId,
+          roundId: job.roundId || "",
           service: job.service || "Window Clean",
           frequencyWeeks: fw,
           price: Number(job.price || 0),
@@ -403,7 +502,6 @@
       render();
     }
 
-    // ---------- Invoice ----------
     function makeInvoiceText(job, customer) {
       const name = (customer && customer.name) ? customer.name : "there";
       const when = job && job.dueDate ? job.dueDate : "";
@@ -432,15 +530,14 @@ Lewis (Clearflow)`
       try {
         await navigator.clipboard.writeText(text);
         setNotice("Invoice message copied ✅");
-        setTimeout(() => setNotice(""), 2500);
+        setTimeout(function() { setNotice(""); }, 2500);
       } catch (e) {
         prompt("Copy this message:", text);
       }
     }
 
-    // ---------- Render ----------
     function setTabsUI() {
-      document.querySelectorAll(".tab").forEach(b => {
+      document.querySelectorAll(".tab").forEach(function(b) {
         const is = b.dataset.tab === activeTab;
         b.className =
           "tab px-3 py-2 rounded-xl text-sm font-medium border " +
@@ -449,79 +546,215 @@ Lewis (Clearflow)`
       });
     }
 
+    function customerCard(c) {
+      const isActive = c.active !== false;
+      const badge = isActive
+        ? `<span class="ml-2 text-xs px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200">Active</span>`
+        : `<span class="ml-2 text-xs px-2 py-1 rounded-lg bg-slate-100 text-slate-700 border border-slate-200">Disabled</span>`;
+
+      const round = getRoundById(c.roundId || "");
+      const nextJob = getNextJobForCustomer(c.id);
+      const nextLine = nextJob
+        ? `${nextJob.dueDate} • ${escHtml(nextJob.service || "")} • ${pounds(nextJob.price)} • ${escHtml(freqLabel(nextJob.frequencyWeeks))}`
+        : "No upcoming job";
+
+      const roundHtml = round
+        ? `<span class="inline-block mt-2 text-xs px-2 py-1 rounded-full border" style="background:${escAttr(round.color || "#0f172a")}22;color:${escAttr(round.color || "#0f172a")};border-color:${escAttr(round.color || "#0f172a")}55">${escHtml(round.name)}</span>`
+        : "";
+
+      return `
+        <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm mb-3 ${isActive ? "" : "opacity-70"}">
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <div class="font-semibold">${escHtml(c.name || "Unnamed")} ${badge}</div>
+              <div class="text-sm text-slate-600">${escHtml((c.address || "") + (c.postcode ? (" " + c.postcode) : ""))}</div>
+              <div class="text-sm text-slate-600">${escHtml(c.phone || "")}</div>
+              ${roundHtml}
+              <div class="text-sm text-slate-500 mt-2">Next clean: ${nextLine}</div>
+              ${c.notes ? `<div class="text-sm text-slate-500 mt-2 whitespace-pre-wrap">${escHtml(c.notes)}</div>` : ""}
+            </div>
+            <div class="flex flex-col gap-2">
+              <button data-action="viewCustomer" data-id="${c.id}" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">View</button>
+              <button data-action="editCustomer" data-id="${c.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Edit</button>
+              ${
+                isActive
+                  ? `<button data-action="disableCustomer" data-id="${c.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Disable</button>`
+                  : `<button data-action="enableCustomer" data-id="${c.id}" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">Enable</button>`
+              }
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
     function jobCard(job) {
       const c = getCustomerById(job.customerId);
+      const round = getRoundById(job.roundId || "");
       const name = c && c.name ? c.name : "Unknown customer";
       const addr = c && c.address ? c.address : "";
       const pc = c && c.postcode ? c.postcode : "";
       const fullAddr = addr + (pc ? (", " + pc) : "");
 
-      const status = job.status || "Due";
-      const paidBadge = (status === "Paid") ? `<span class="ml-2 text-xs px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200">Paid</span>` : "";
-      const unpaidBadge = (status === "Unpaid") ? `<span class="ml-2 text-xs px-2 py-1 rounded-lg bg-amber-50 text-amber-800 border border-amber-200">Unpaid</span>` : "";
-
-      const notesHtml = job.notes ? `<div class="text-sm text-slate-500 mt-2 whitespace-pre-wrap">${safeText(job.notes)}</div>` : "";
+      const status = effectiveStatus(job);
+      const paidBadge = status === "Paid"
+        ? `<span class="ml-2 text-xs px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200">Paid</span>` : "";
+      const unpaidBadge = status === "Unpaid"
+        ? `<span class="ml-2 text-xs px-2 py-1 rounded-lg bg-amber-50 text-amber-800 border border-amber-200">Unpaid</span>` : "";
+      const roundBadge = round
+        ? `<span class="ml-2 text-xs px-2 py-1 rounded-lg border" style="background:${escAttr(round.color || "#0f172a")}22;color:${escAttr(round.color || "#0f172a")};border-color:${escAttr(round.color || "#0f172a")}55">${escHtml(round.name)}</span>`
+        : "";
+      const notesHtml = job.notes ? `<div class="text-sm text-slate-500 mt-2 whitespace-pre-wrap">${escHtml(job.notes)}</div>` : "";
 
       let buttons = "";
       if (status === "Due") {
         buttons = `
           <button data-action="done" data-id="${job.id}" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">Done</button>
+          <button data-action="viewJob" data-id="${job.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">View</button>
           <button data-action="editJob" data-id="${job.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Edit</button>
           <button data-action="deleteJob" data-id="${job.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Delete</button>
-          <button data-action="invoice" data-id="${job.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Invoice</button>
         `;
       } else if (status === "Unpaid") {
         buttons = `
           <button data-action="paid" data-id="${job.id}" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">Paid</button>
+          <button data-action="viewJob" data-id="${job.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">View</button>
           <button data-action="editJob" data-id="${job.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Edit</button>
           <button data-action="deleteJob" data-id="${job.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Delete</button>
-          <button data-action="invoice" data-id="${job.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Invoice</button>
         `;
       } else {
         buttons = `
+          <button data-action="viewJob" data-id="${job.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">View</button>
           <button data-action="editJob" data-id="${job.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Edit</button>
           <button data-action="deleteJob" data-id="${job.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Delete</button>
-          <button data-action="invoice" data-id="${job.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Invoice</button>
         `;
       }
 
       return `
         <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm mb-3">
-          <div class="text-sm text-slate-500">${job.dueDate || ""} • ${status}${paidBadge}${unpaidBadge}</div>
-          <div class="font-semibold">${safeText(name)}</div>
+          <div class="text-sm text-slate-500">${job.dueDate || ""} • ${status}${paidBadge}${unpaidBadge}${roundBadge}</div>
+          <div class="font-semibold">${escHtml(name)}</div>
           <div class="text-sm text-slate-700 mt-1">
-            ${safeText(job.service || "")} • ${safeText(freqLabel(job.frequencyWeeks))} •
+            ${escHtml(job.service || "")} • ${escHtml(freqLabel(job.frequencyWeeks))} •
             <span class="font-semibold">${pounds(job.price)}</span>
           </div>
-          <div class="text-sm text-slate-600 mt-2">${safeText(fullAddr)}</div>
+          <div class="text-sm text-slate-600 mt-2">${escHtml(fullAddr)}</div>
           <a class="text-sm underline" target="_blank" href="${mapLink(addr, pc)}">Open in Maps</a>
           ${notesHtml}
-          <div class="mt-3 flex flex-wrap gap-2">${buttons}</div>
+          <div class="mt-3 flex flex-wrap gap-2">
+            ${buttons}
+            <button data-action="invoice" data-id="${job.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Invoice</button>
+          </div>
         </div>
       `;
     }
 
+    function wireCustomerButtons() {
+      content.querySelectorAll('[data-action="disableCustomer"]').forEach(function(btn) {
+        btn.addEventListener("click", async function() { await setCustomerActive(btn.dataset.id, false); });
+      });
+      content.querySelectorAll('[data-action="enableCustomer"]').forEach(function(btn) {
+        btn.addEventListener("click", async function() { await setCustomerActive(btn.dataset.id, true); });
+      });
+      content.querySelectorAll('[data-action="editCustomer"]').forEach(function(btn) {
+        btn.addEventListener("click", function() { openEditCustomer(btn.dataset.id); });
+      });
+      content.querySelectorAll('[data-action="viewCustomer"]').forEach(function(btn) {
+        btn.addEventListener("click", function() { openCustomerDetails(btn.dataset.id); });
+      });
+    }
+
     function wireJobButtons() {
-      content.querySelectorAll('[data-action="done"]').forEach(btn => {
-        btn.addEventListener("click", async () => markDone(btn.dataset.id));
+      content.querySelectorAll('[data-action="done"]').forEach(function(btn) {
+        btn.addEventListener("click", async function() { await markDone(btn.dataset.id); });
       });
-      content.querySelectorAll('[data-action="paid"]').forEach(btn => {
-        btn.addEventListener("click", async () => markPaid(btn.dataset.id));
+      content.querySelectorAll('[data-action="paid"]').forEach(function(btn) {
+        btn.addEventListener("click", async function() { await markPaid(btn.dataset.id); });
       });
-      content.querySelectorAll('[data-action="invoice"]').forEach(btn => {
-        btn.addEventListener("click", async () => {
-          let job = null;
-          for (let i = 0; i < jobs.length; i++) { if (jobs[i].id === btn.dataset.id) { job = jobs[i]; break; } }
+      content.querySelectorAll('[data-action="invoice"]').forEach(function(btn) {
+        btn.addEventListener("click", async function() {
+          const job = jobs.find(function(j) { return j.id === btn.dataset.id; });
           const cust = job ? getCustomerById(job.customerId) : null;
           const txt = makeInvoiceText(job, cust);
           await copyToClipboard(txt);
         });
       });
-      content.querySelectorAll('[data-action="editJob"]').forEach(btn => {
-        btn.addEventListener("click", () => openEditJob(btn.dataset.id));
+      content.querySelectorAll('[data-action="editJob"]').forEach(function(btn) {
+        btn.addEventListener("click", function() { openEditJob(btn.dataset.id); });
       });
-      content.querySelectorAll('[data-action="deleteJob"]').forEach(btn => {
-        btn.addEventListener("click", async () => deleteJob(btn.dataset.id));
+      content.querySelectorAll('[data-action="deleteJob"]').forEach(function(btn) {
+        btn.addEventListener("click", async function() { await deleteJob(btn.dataset.id); });
+      });
+      content.querySelectorAll('[data-action="viewJob"]').forEach(function(btn) {
+        btn.addEventListener("click", function() { openJobDetails(btn.dataset.id); });
+      });
+    }
+
+    function renderCustomers() {
+      const list = customers.slice().sort(function(a, b) {
+        const aa = a.active !== false ? 1 : 0;
+        const bb = b.active !== false ? 1 : 0;
+        if (aa !== bb) return bb - aa;
+        const an = String(a.name || "").toLowerCase();
+        const bn = String(b.name || "").toLowerCase();
+        return an.localeCompare(bn);
+      });
+
+      if (!list.length) {
+        content.innerHTML = `<div class="p-4 rounded-2xl bg-white border border-slate-200 text-slate-600">No customers yet.</div>`;
+        return;
+      }
+
+      content.innerHTML = list.map(customerCard).join("");
+      wireCustomerButtons();
+    }
+
+    function renderRounds() {
+      const list = rounds.slice();
+
+      content.innerHTML = `
+        <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm mb-4">
+          <div class="font-semibold text-lg mb-3">Add Round</div>
+          <form id="fRound" class="grid gap-3 md:grid-cols-[1fr_140px_120px] items-end">
+            <div class="grid gap-1">
+              <label class="text-sm font-medium">Round name</label>
+              <input name="name" class="px-3 py-2 rounded-xl border border-slate-200" required />
+            </div>
+            <div class="grid gap-1">
+              <label class="text-sm font-medium">Colour</label>
+              <input name="color" type="color" value="#0f172a" class="h-11 rounded-xl border border-slate-200 bg-white" />
+            </div>
+            <button class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">Save</button>
+          </form>
+        </div>
+
+        <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
+          <div class="font-semibold text-lg mb-3">Your Rounds</div>
+          ${list.length ? list.map(function(r) {
+            const count = jobs.filter(function(j) { return j.roundId === r.id && effectiveStatus(j) !== "Paid"; }).length;
+            return `
+              <div class="flex items-center justify-between gap-3 py-3 border-b border-slate-100 last:border-b-0">
+                <div class="flex items-center gap-3">
+                  <span class="inline-block w-4 h-4 rounded-full border border-slate-300" style="background:${escAttr(r.color || "#0f172a")}"></span>
+                  <div>
+                    <div class="font-medium">${escHtml(r.name || "")}</div>
+                    <div class="text-sm text-slate-500">${count} active jobs</div>
+                  </div>
+                </div>
+                <button data-action="deleteRound" data-id="${r.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Delete</button>
+              </div>
+            `;
+          }).join("") : `<div class="text-sm text-slate-500">No rounds yet.</div>`}
+        </div>
+      `;
+
+      document.getElementById("fRound").addEventListener("submit", async function(e) {
+        e.preventDefault();
+        const fd = new FormData(e.target);
+        await createRound(Object.fromEntries(fd.entries()));
+        e.target.reset();
+      });
+
+      content.querySelectorAll('[data-action="deleteRound"]').forEach(function(btn) {
+        btn.addEventListener("click", async function() { await deleteRound(btn.dataset.id); });
       });
     }
 
@@ -534,70 +767,14 @@ Lewis (Clearflow)`
       wireJobButtons();
     }
 
-    function renderCustomers() {
-      const list = customers.slice().sort((a, b) => {
-        const aa = (a.active !== false) ? 1 : 0;
-        const bb = (b.active !== false) ? 1 : 0;
-        if (aa !== bb) return bb - aa;
-        const an = a.name ? String(a.name).toLowerCase() : "";
-        const bn = b.name ? String(b.name).toLowerCase() : "";
-        return an.localeCompare(bn);
-      });
-
-      if (!list.length) {
-        content.innerHTML = `<div class="p-4 rounded-2xl bg-white border border-slate-200 text-slate-600">No customers yet.</div>`;
-        return;
-      }
-
-      content.innerHTML = list.map(c => {
-        const isActive = (c.active !== false);
-        const badge = isActive
-          ? `<span class="ml-2 text-xs px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200">Active</span>`
-          : `<span class="ml-2 text-xs px-2 py-1 rounded-lg bg-slate-100 text-slate-700 border border-slate-200">Disabled</span>`;
-
-        const notesHtml = c.notes ? `<div class="text-sm text-slate-500 mt-2 whitespace-pre-wrap">${safeText(c.notes)}</div>` : "";
-
-        return `
-          <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm mb-3 ${isActive ? "" : "opacity-70"}">
-            <div class="flex items-start justify-between gap-3">
-              <div>
-                <div class="font-semibold">${safeText(c.name || "Unnamed")} ${badge}</div>
-                <div class="text-sm text-slate-600">${safeText((c.address || "") + (c.postcode ? (" " + c.postcode) : ""))}</div>
-                <div class="text-sm text-slate-600">${safeText(c.phone || "")}</div>
-                ${notesHtml}
-              </div>
-              <div class="flex flex-col gap-2">
-                <button data-action="editCustomer" data-id="${c.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Edit</button>
-                ${
-                  isActive
-                    ? `<button data-action="disableCustomer" data-id="${c.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Disable</button>`
-                    : `<button data-action="enableCustomer" data-id="${c.id}" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">Enable</button>`
-                }
-              </div>
-            </div>
-          </div>
-        `;
-      }).join("");
-
-      content.querySelectorAll('[data-action="disableCustomer"]').forEach(btn => {
-        btn.addEventListener("click", async () => setCustomerActive(btn.dataset.id, false));
-      });
-      content.querySelectorAll('[data-action="enableCustomer"]').forEach(btn => {
-        btn.addEventListener("click", async () => setCustomerActive(btn.dataset.id, true));
-      });
-      content.querySelectorAll('[data-action="editCustomer"]').forEach(btn => {
-        btn.addEventListener("click", () => openEditCustomer(btn.dataset.id));
-      });
-    }
-
-    // ---------- Calendar UI ----------
     function renderCalendar() {
       const firstDow = startOfMonthDow(calYear, calMonth);
       const dim = daysInMonth(calYear, calMonth);
-
       const cells = [];
+
       for (let i = 0; i < 42; i++) {
         const dayNum = i - firstDow + 1;
+
         if (dayNum < 1 || dayNum > dim) {
           cells.push(`<div class="min-h-[96px] bg-white/40 border border-slate-200 rounded-2xl p-2"></div>`);
           continue;
@@ -606,21 +783,18 @@ Lewis (Clearflow)`
         const iso = isoFromYMD(calYear, calMonth, dayNum);
         const list = jobsOnDate(iso);
 
-        const items = list.slice(0, 3).map(j => {
+        const items = list.slice(0, 3).map(function(j) {
           const c = getCustomerById(j.customerId);
-          const name = c && c.name ? c.name : "Unknown";
-          const badge = (j.status === "Unpaid")
-            ? `<span class="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-800">Unpaid</span>`
-            : ``;
+          const addr = c && c.address ? c.address : "No address";
           return `
             <div class="text-xs truncate">
-              <span class="font-medium">${safeText(name)}</span>
-              <span class="text-slate-500">• ${safeText(j.service || "")}</span>
-              ${badge}
-            </div>`;
+              <span class="font-medium">${escHtml(addr)}</span>
+              <span class="text-slate-500">• ${pounds(j.price)}</span>
+            </div>
+          `;
         }).join("");
 
-        const more = (list.length > 3)
+        const more = list.length > 3
           ? `<div class="text-[11px] text-slate-500 mt-1">+${list.length - 3} more</div>`
           : "";
 
@@ -650,8 +824,13 @@ Lewis (Clearflow)`
           </div>
 
           <div class="mt-3 grid grid-cols-7 gap-2 text-xs text-slate-500">
-            <div class="text-center">Mon</div><div class="text-center">Tue</div><div class="text-center">Wed</div>
-            <div class="text-center">Thu</div><div class="text-center">Fri</div><div class="text-center">Sat</div><div class="text-center">Sun</div>
+            <div class="text-center">Mon</div>
+            <div class="text-center">Tue</div>
+            <div class="text-center">Wed</div>
+            <div class="text-center">Thu</div>
+            <div class="text-center">Fri</div>
+            <div class="text-center">Sat</div>
+            <div class="text-center">Sun</div>
           </div>
 
           <div class="mt-2 grid grid-cols-7 gap-2">
@@ -659,47 +838,46 @@ Lewis (Clearflow)`
           </div>
 
           <div class="mt-3 text-xs text-slate-500">
-            Click a day to view jobs + add a job on that date.
+            Tap a day to see jobs, address + price, then tap a row for full details.
           </div>
         </div>
       `;
 
-      document.getElementById("calPrev").addEventListener("click", () => {
+      document.getElementById("calPrev").addEventListener("click", function() {
         calMonth -= 1;
         if (calMonth < 0) { calMonth = 11; calYear -= 1; }
         renderCalendar();
       });
 
-      document.getElementById("calNext").addEventListener("click", () => {
+      document.getElementById("calNext").addEventListener("click", function() {
         calMonth += 1;
         if (calMonth > 11) { calMonth = 0; calYear += 1; }
         renderCalendar();
       });
 
-      document.getElementById("calToday").addEventListener("click", () => {
+      document.getElementById("calToday").addEventListener("click", function() {
         const d = new Date();
         calYear = d.getFullYear();
         calMonth = d.getMonth();
         renderCalendar();
       });
 
-      content.querySelectorAll("[data-cal-date]").forEach(btn => {
-        btn.addEventListener("click", () => openCalendarDay(btn.dataset.calDate));
+      content.querySelectorAll("[data-cal-date]").forEach(function(btn) {
+        btn.addEventListener("click", function() { openCalendarDay(btn.dataset.calDate); });
       });
     }
 
     function openCalendarDay(iso) {
       const list = sortJobsByDue(jobsOnDate(iso).slice());
 
-      const rows = list.length ? list.map(j => {
+      const rows = list.length ? list.map(function(j) {
         const c = getCustomerById(j.customerId);
-        const name = c && c.name ? c.name : "Unknown";
-        const st = j.status || "Due";
+        const addr = c && c.address ? c.address : "Unknown address";
         return `
-          <div class="border border-slate-200 rounded-xl p-3">
-            <div class="text-sm font-semibold">${safeText(name)}</div>
-            <div class="text-sm text-slate-600">${safeText(j.service || "")} • ${safeText(st)} • <span class="font-semibold">${pounds(j.price)}</span></div>
-          </div>
+          <button data-day-job="${j.id}" class="w-full text-left border border-slate-200 rounded-xl p-3 hover:border-slate-400">
+            <div class="font-semibold">${escHtml(addr)} • ${pounds(j.price)}</div>
+            <div class="text-sm text-slate-600">${escHtml(j.service || "")} • ${escHtml(effectiveStatus(j))}</div>
+          </button>
         `;
       }).join("") : `<div class="text-sm text-slate-500">No jobs on this date.</div>`;
 
@@ -712,19 +890,160 @@ Lewis (Clearflow)`
         </div>
       `);
 
-      document.getElementById("btnAddJobOnDate").addEventListener("click", () => {
+      document.getElementById("btnAddJobOnDate").addEventListener("click", function() {
         closeModal();
         openAddJob(iso);
       });
+
+      document.querySelectorAll("[data-day-job]").forEach(function(btn) {
+        btn.addEventListener("click", function() {
+          closeModal();
+          openJobDetails(btn.dataset.dayJob);
+        });
+      });
     }
 
-    // ---------- Main render switch ----------
+    function openCustomerDetails(customerId) {
+      const c = getCustomerById(customerId);
+      if (!c) return;
+
+      const round = getRoundById(c.roundId || "");
+      const nextJob = getNextJobForCustomer(c.id);
+      const customerJobs = sortJobsByDue(jobs.filter(function(j) { return j.customerId === c.id; }).slice());
+
+      const upcomingHtml = nextJob
+        ? `
+          <div class="border border-slate-200 rounded-xl p-3">
+            <div class="font-semibold">Next clean</div>
+            <div class="text-sm text-slate-600 mt-1">${nextJob.dueDate} • ${escHtml(nextJob.service || "")} • ${escHtml(freqLabel(nextJob.frequencyWeeks))} • ${pounds(nextJob.price)}</div>
+          </div>
+        `
+        : `<div class="text-sm text-slate-500">No upcoming job.</div>`;
+
+      const historyHtml = customerJobs.length
+        ? customerJobs.slice(0, 10).map(function(j) {
+            return `
+              <div class="border border-slate-200 rounded-xl p-3">
+                <div class="font-semibold">${j.dueDate || ""} • ${escHtml(effectiveStatus(j))}</div>
+                <div class="text-sm text-slate-600 mt-1">${escHtml(j.service || "")} • ${escHtml(freqLabel(j.frequencyWeeks))} • ${pounds(j.price)}</div>
+              </div>
+            `;
+          }).join("")
+        : `<div class="text-sm text-slate-500">No jobs yet.</div>`;
+
+      openModal(escHtml(c.name || "Customer"), `
+        <div class="grid gap-4">
+          <div class="grid gap-2">
+            <div><span class="font-semibold">Address:</span> ${escHtml((c.address || "") + (c.postcode ? " " + c.postcode : ""))}</div>
+            <div><span class="font-semibold">Phone:</span> ${escHtml(c.phone || "")}</div>
+            <div><span class="font-semibold">Email:</span> ${escHtml(c.email || "")}</div>
+            <div><span class="font-semibold">Payment:</span> ${escHtml(c.preferredPayment || "Cash")}</div>
+            <div><span class="font-semibold">Round:</span> ${round ? escHtml(round.name) : "—"}</div>
+            ${c.notes ? `<div><span class="font-semibold">Notes:</span><div class="mt-1 text-sm text-slate-600 whitespace-pre-wrap">${escHtml(c.notes)}</div></div>` : ""}
+          </div>
+
+          ${upcomingHtml}
+
+          <div class="flex flex-wrap gap-2">
+            <button id="viewCustomerEdit" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">Edit customer</button>
+            <button id="viewCustomerAddJob" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Add job</button>
+          </div>
+
+          <div>
+            <div class="font-semibold mb-2">Jobs</div>
+            <div class="grid gap-2">
+              ${historyHtml}
+            </div>
+          </div>
+        </div>
+      `);
+
+      document.getElementById("viewCustomerEdit").addEventListener("click", function() {
+        closeModal();
+        openEditCustomer(customerId);
+      });
+
+      document.getElementById("viewCustomerAddJob").addEventListener("click", function() {
+        closeModal();
+        openAddJob("", customerId);
+      });
+    }
+
+    function openJobDetails(jobId) {
+      const job = jobs.find(function(j) { return j.id === jobId; });
+      if (!job) return;
+
+      const c = getCustomerById(job.customerId);
+      const round = getRoundById(job.roundId || "");
+      const status = effectiveStatus(job);
+
+      openModal(`Job • ${job.dueDate || ""}`, `
+        <div class="grid gap-4">
+          <div class="grid gap-2">
+            <div><span class="font-semibold">Customer:</span> ${escHtml(c && c.name ? c.name : "Unknown customer")}</div>
+            <div><span class="font-semibold">Address:</span> ${escHtml(c ? ((c.address || "") + (c.postcode ? " " + c.postcode : "")) : "")}</div>
+            <div><span class="font-semibold">Phone:</span> ${escHtml(c && c.phone ? c.phone : "")}</div>
+            <div><span class="font-semibold">Service:</span> ${escHtml(job.service || "")}</div>
+            <div><span class="font-semibold">Frequency:</span> ${escHtml(freqLabel(job.frequencyWeeks))}</div>
+            <div><span class="font-semibold">Price:</span> ${pounds(job.price)}</div>
+            <div><span class="font-semibold">Status:</span> ${escHtml(status)}</div>
+            <div><span class="font-semibold">Round:</span> ${round ? escHtml(round.name) : "—"}</div>
+            ${job.notes ? `<div><span class="font-semibold">Notes:</span><div class="mt-1 text-sm text-slate-600 whitespace-pre-wrap">${escHtml(job.notes)}</div></div>` : ""}
+          </div>
+
+          <div class="flex flex-wrap gap-2">
+            ${status === "Due" ? `<button id="jobDetailDone" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">Done</button>` : ""}
+            ${status === "Unpaid" ? `<button id="jobDetailPaid" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">Paid</button>` : ""}
+            <button id="jobDetailEdit" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Edit</button>
+            <button id="jobDetailDelete" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Delete</button>
+            <button id="jobDetailInvoice" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Invoice</button>
+          </div>
+        </div>
+      `);
+
+      const btnDone = document.getElementById("jobDetailDone");
+      const btnPaid = document.getElementById("jobDetailPaid");
+      const btnEdit = document.getElementById("jobDetailEdit");
+      const btnDelete = document.getElementById("jobDetailDelete");
+      const btnInvoice = document.getElementById("jobDetailInvoice");
+
+      if (btnDone) btnDone.addEventListener("click", async function() {
+        closeModal();
+        await markDone(jobId);
+      });
+
+      if (btnPaid) btnPaid.addEventListener("click", async function() {
+        closeModal();
+        await markPaid(jobId);
+      });
+
+      btnEdit.addEventListener("click", function() {
+        closeModal();
+        openEditJob(jobId);
+      });
+
+      btnDelete.addEventListener("click", async function() {
+        closeModal();
+        await deleteJob(jobId);
+      });
+
+      btnInvoice.addEventListener("click", async function() {
+        const txt = makeInvoiceText(job, c);
+        await copyToClipboard(txt);
+      });
+    }
+
     function render() {
       setTabsUI();
       renderSubhead();
 
       if (activeTab === "customers") {
         renderCustomers();
+        return;
+      }
+
+      if (activeTab === "rounds") {
+        renderRounds();
         return;
       }
 
@@ -739,31 +1058,95 @@ Lewis (Clearflow)`
       let list = jobs.slice();
 
       if (activeTab !== "all") {
-        list = list.filter(j => j.status !== "Paid");
+        list = list.filter(function(j) { return effectiveStatus(j) !== "Paid"; });
       }
 
       if (activeTab === "unpaid") {
-        list = list.filter(j => j.status === "Unpaid");
+        list = list.filter(function(j) { return effectiveStatus(j) === "Unpaid"; });
         sortJobsByDue(list);
         renderJobs(list);
         return;
       }
 
       if (activeTab === "today") {
-        list = list.filter(j => j.status === "Due" && j.dueDate === t);
+        list = list.filter(function(j) { return effectiveStatus(j) === "Due" && j.dueDate === t; });
       } else if (activeTab === "week") {
-        list = list.filter(j => j.status === "Due" && j.dueDate >= t && j.dueDate <= weekEnd);
+        list = list.filter(function(j) { return effectiveStatus(j) === "Due" && j.dueDate >= t && j.dueDate <= weekEnd; });
       } else if (activeTab === "overdue") {
-        list = list.filter(j => j.status === "Due" && j.dueDate < t);
+        list = list.filter(function(j) { return effectiveStatus(j) === "Due" && j.dueDate < t; });
       } else if (activeTab === "all") {
-        // show everything
+        // everything
       }
 
       sortJobsByDue(list);
       renderJobs(list);
     }
 
-    // ---------- Forms ----------
+    function roundOptionsHtml(selectedId) {
+      let html = `<option value="">-- No Round --</option>`;
+      for (let i = 0; i < rounds.length; i++) {
+        const r = rounds[i];
+        html += `<option value="${r.id}" ${selectedId === r.id ? "selected" : ""}>${escHtml(r.name)}</option>`;
+      }
+      return html;
+    }
+
+    function customerOptionsHtml(selectedId, onlyActive) {
+      let list = customers.slice();
+      if (onlyActive) list = list.filter(function(c) { return c.active !== false; });
+      return list.map(function(c) {
+        return `<option value="${c.id}" ${selectedId === c.id ? "selected" : ""}>${escHtml(c.name)}</option>`;
+      }).join("");
+    }
+
+    function setupRoundAutoFill(formId, currentJobId) {
+      const form = document.getElementById(formId);
+      if (!form) return;
+
+      const roundSel = form.querySelector('[name="roundId"]');
+      const dueInput = form.querySelector('[name="dueDate"]');
+      const hint = form.querySelector('[data-round-hint]');
+      const custSel = form.querySelector('[name="customerId"]');
+
+      function updateHintAndDate(fromCustomer) {
+        const roundId = roundSel ? roundSel.value : "";
+        if (!roundId) {
+          if (hint) hint.textContent = "No round selected.";
+          return;
+        }
+
+        const nextDate = getNextDateForRound(roundId, currentJobId || "");
+        const count = getFutureJobsForRound(roundId, currentJobId || "").length;
+
+        if (hint) {
+          if (nextDate) hint.textContent = "Next round date: " + nextDate + " (" + count + " job" + (count === 1 ? "" : "s") + ")";
+          else hint.textContent = "No future jobs found in this round yet.";
+        }
+
+        if (nextDate) {
+          dueInput.value = nextDate;
+        }
+      }
+
+      if (custSel && roundSel) {
+        custSel.addEventListener("change", function() {
+          const cust = getCustomerById(custSel.value);
+          if (cust && cust.roundId) {
+            roundSel.value = cust.roundId;
+          }
+          updateHintAndDate(true);
+        });
+      }
+
+      if (roundSel) {
+        roundSel.addEventListener("change", function() {
+          updateHintAndDate(false);
+        });
+      }
+
+      updateHintAndDate(false);
+    }
+
     function openAddCustomer() {
       openModal("Add Customer", `
         <form id="fCustomer" class="grid gap-3">
@@ -796,9 +1179,16 @@ Lewis (Clearflow)`
             <div class="grid gap-1">
               <label class="text-sm font-medium">Payment</label>
               <select name="preferredPayment" class="px-3 py-2 rounded-xl border border-slate-200">
-                ${PAYMENTS.map(p => `<option>${p}</option>`).join("")}
+                ${PAYMENTS.map(function(p) { return `<option>${p}</option>`; }).join("")}
               </select>
             </div>
+          </div>
+
+          <div class="grid gap-1">
+            <label class="text-sm font-medium">Default round</label>
+            <select name="roundId" class="px-3 py-2 rounded-xl border border-slate-200">
+              ${roundOptionsHtml("")}
+            </select>
           </div>
 
           <div class="grid gap-1">
@@ -810,7 +1200,7 @@ Lewis (Clearflow)`
         </form>
       `);
 
-      document.getElementById("fCustomer").addEventListener("submit", async (e) => {
+      document.getElementById("fCustomer").addEventListener("submit", async function(e) {
         e.preventDefault();
         const fd = new FormData(e.target);
         await createCustomer(Object.fromEntries(fd.entries()));
@@ -828,48 +1218,55 @@ Lewis (Clearflow)`
         <form id="fEditCustomer" class="grid gap-3">
           <div class="grid gap-1">
             <label class="text-sm font-medium">Name</label>
-            <input name="name" value="${safeText(c.name)}" class="px-3 py-2 rounded-xl border border-slate-200" required />
+            <input name="name" value="${escAttr(c.name || "")}" class="px-3 py-2 rounded-xl border border-slate-200" required />
           </div>
 
           <div class="grid grid-cols-2 gap-3">
             <div class="grid gap-1">
               <label class="text-sm font-medium">Phone</label>
-              <input name="phone" value="${safeText(c.phone)}" class="px-3 py-2 rounded-xl border border-slate-200" />
+              <input name="phone" value="${escAttr(c.phone || "")}" class="px-3 py-2 rounded-xl border border-slate-200" />
             </div>
             <div class="grid gap-1">
               <label class="text-sm font-medium">Email</label>
-              <input name="email" type="email" value="${safeText(c.email)}" class="px-3 py-2 rounded-xl border border-slate-200" />
+              <input name="email" type="email" value="${escAttr(c.email || "")}" class="px-3 py-2 rounded-xl border border-slate-200" />
             </div>
           </div>
 
           <div class="grid gap-1">
             <label class="text-sm font-medium">Address</label>
-            <input name="address" value="${safeText(c.address)}" class="px-3 py-2 rounded-xl border border-slate-200" />
+            <input name="address" value="${escAttr(c.address || "")}" class="px-3 py-2 rounded-xl border border-slate-200" />
           </div>
 
           <div class="grid grid-cols-2 gap-3">
             <div class="grid gap-1">
               <label class="text-sm font-medium">Postcode</label>
-              <input name="postcode" value="${safeText(c.postcode)}" class="px-3 py-2 rounded-xl border border-slate-200" />
+              <input name="postcode" value="${escAttr(c.postcode || "")}" class="px-3 py-2 rounded-xl border border-slate-200" />
             </div>
             <div class="grid gap-1">
               <label class="text-sm font-medium">Payment</label>
               <select name="preferredPayment" class="px-3 py-2 rounded-xl border border-slate-200">
-                ${PAYMENTS.map(p => `<option ${((c.preferredPayment || "Cash") === p) ? "selected" : ""}>${p}</option>`).join("")}
+                ${PAYMENTS.map(function(p) { return `<option ${((c.preferredPayment || "Cash") === p) ? "selected" : ""}>${p}</option>`; }).join("")}
               </select>
             </div>
           </div>
 
           <div class="grid gap-1">
+            <label class="text-sm font-medium">Default round</label>
+            <select name="roundId" class="px-3 py-2 rounded-xl border border-slate-200">
+              ${roundOptionsHtml(c.roundId || "")}
+            </select>
+          </div>
+
+          <div class="grid gap-1">
             <label class="text-sm font-medium">Notes</label>
-            <textarea name="notes" rows="3" class="px-3 py-2 rounded-xl border border-slate-200">${safeText(c.notes)}</textarea>
+            <textarea name="notes" rows="3" class="px-3 py-2 rounded-xl border border-slate-200">${escHtml(c.notes || "")}</textarea>
           </div>
 
           <button class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">Save</button>
         </form>
       `);
 
-      document.getElementById("fEditCustomer").addEventListener("submit", async (e) => {
+      document.getElementById("fEditCustomer").addEventListener("submit", async function(e) {
         e.preventDefault();
         const fd = new FormData(e.target);
         await updateCustomer(customerId, Object.fromEntries(fd.entries()));
@@ -877,9 +1274,8 @@ Lewis (Clearflow)`
       });
     }
 
-    // openAddJob can accept a prefilled date (used by calendar)
-    function openAddJob(prefillDate) {
-      const activeCustomers = customers.filter(c => c.active !== false);
+    function openAddJob(prefillDate, prefillCustomerId) {
+      const activeCustomers = customers.filter(function(c) { return c.active !== false; });
 
       if (!activeCustomers.length) {
         setNotice("Add a customer first (or enable one).");
@@ -888,14 +1284,17 @@ Lewis (Clearflow)`
         return;
       }
 
-      const dateVal = prefillDate || todayISO();
+      const customerId = prefillCustomerId || activeCustomers[0].id;
+      const customer = getCustomerById(customerId);
+      const defaultRoundId = customer && customer.roundId ? customer.roundId : "";
+      const initialDate = prefillDate || getNextDateForRound(defaultRoundId, "") || todayISO();
 
       openModal("Add Job", `
         <form id="fJob" class="grid gap-3">
           <div class="grid gap-1">
             <label class="text-sm font-medium">Customer</label>
             <select name="customerId" class="px-3 py-2 rounded-xl border border-slate-200" required>
-              ${activeCustomers.map(c => `<option value="${c.id}">${safeText(c.name)}</option>`).join("")}
+              ${customerOptionsHtml(customerId, true)}
             </select>
           </div>
 
@@ -903,21 +1302,29 @@ Lewis (Clearflow)`
             <div class="grid gap-1">
               <label class="text-sm font-medium">Service</label>
               <select name="service" class="px-3 py-2 rounded-xl border border-slate-200">
-                ${SERVICES.map(s => `<option>${safeText(s)}</option>`).join("")}
+                ${SERVICES.map(function(s) { return `<option>${escHtml(s)}</option>`; }).join("")}
               </select>
             </div>
             <div class="grid gap-1">
               <label class="text-sm font-medium">Frequency</label>
               <select name="frequencyWeeks" class="px-3 py-2 rounded-xl border border-slate-200">
-                ${FREQS.map(f => `<option value="${f}">${safeText(freqLabel(f))}</option>`).join("")}
+                ${FREQS.map(function(f) { return `<option value="${f}">${escHtml(freqLabel(f))}</option>`; }).join("")}
               </select>
             </div>
+          </div>
+
+          <div class="grid gap-1">
+            <label class="text-sm font-medium">Round</label>
+            <select name="roundId" class="px-3 py-2 rounded-xl border border-slate-200">
+              ${roundOptionsHtml(defaultRoundId)}
+            </select>
+            <div data-round-hint class="text-xs text-slate-500">No round selected.</div>
           </div>
 
           <div class="grid grid-cols-2 gap-3">
             <div class="grid gap-1">
               <label class="text-sm font-medium">Due date</label>
-              <input name="dueDate" type="date" class="px-3 py-2 rounded-xl border border-slate-200" value="${dateVal}" />
+              <input name="dueDate" type="date" class="px-3 py-2 rounded-xl border border-slate-200" value="${initialDate}" />
             </div>
             <div class="grid gap-1">
               <label class="text-sm font-medium">Price (£)</label>
@@ -934,7 +1341,9 @@ Lewis (Clearflow)`
         </form>
       `);
 
-      document.getElementById("fJob").addEventListener("submit", async (e) => {
+      setupRoundAutoFill("fJob", "");
+
+      document.getElementById("fJob").addEventListener("submit", async function(e) {
         e.preventDefault();
         const fd = new FormData(e.target);
         await createJob(Object.fromEntries(fd.entries()));
@@ -945,18 +1354,15 @@ Lewis (Clearflow)`
     }
 
     function openEditJob(jobId) {
-      let j = null;
-      for (let i = 0; i < jobs.length; i++) { if (jobs[i].id === jobId) { j = jobs[i]; break; } }
+      const j = jobs.find(function(x) { return x.id === jobId; });
       if (!j) return;
-
-      const allCustomers = customers.slice();
 
       openModal("Edit Job", `
         <form id="fEditJob" class="grid gap-3">
           <div class="grid gap-1">
             <label class="text-sm font-medium">Customer</label>
             <select name="customerId" class="px-3 py-2 rounded-xl border border-slate-200" required>
-              ${allCustomers.map(c => `<option value="${c.id}" ${(j.customerId === c.id) ? "selected" : ""}>${safeText(c.name)}</option>`).join("")}
+              ${customerOptionsHtml(j.customerId, false)}
             </select>
           </div>
 
@@ -964,15 +1370,23 @@ Lewis (Clearflow)`
             <div class="grid gap-1">
               <label class="text-sm font-medium">Service</label>
               <select name="service" class="px-3 py-2 rounded-xl border border-slate-200">
-                ${SERVICES.map(s => `<option ${(j.service === s) ? "selected" : ""}>${safeText(s)}</option>`).join("")}
+                ${SERVICES.map(function(s) { return `<option ${(j.service === s) ? "selected" : ""}>${escHtml(s)}</option>`; }).join("")}
               </select>
             </div>
             <div class="grid gap-1">
               <label class="text-sm font-medium">Frequency</label>
               <select name="frequencyWeeks" class="px-3 py-2 rounded-xl border border-slate-200">
-                ${FREQS.map(f => `<option value="${f}" ${(Number(j.frequencyWeeks) === Number(f)) ? "selected" : ""}>${safeText(freqLabel(f))}</option>`).join("")}
+                ${FREQS.map(function(f) { return `<option value="${f}" ${(Number(j.frequencyWeeks) === Number(f)) ? "selected" : ""}>${escHtml(freqLabel(f))}</option>`; }).join("")}
               </select>
             </div>
+          </div>
+
+          <div class="grid gap-1">
+            <label class="text-sm font-medium">Round</label>
+            <select name="roundId" class="px-3 py-2 rounded-xl border border-slate-200">
+              ${roundOptionsHtml(j.roundId || "")}
+            </select>
+            <div data-round-hint class="text-xs text-slate-500">No round selected.</div>
           </div>
 
           <div class="grid grid-cols-2 gap-3">
@@ -988,14 +1402,16 @@ Lewis (Clearflow)`
 
           <div class="grid gap-1">
             <label class="text-sm font-medium">Notes</label>
-            <textarea name="notes" rows="3" class="px-3 py-2 rounded-xl border border-slate-200">${safeText(j.notes)}</textarea>
+            <textarea name="notes" rows="3" class="px-3 py-2 rounded-xl border border-slate-200">${escHtml(j.notes || "")}</textarea>
           </div>
 
           <button class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">Save</button>
         </form>
       `);
 
-      document.getElementById("fEditJob").addEventListener("submit", async (e) => {
+      setupRoundAutoFill("fEditJob", jobId);
+
+      document.getElementById("fEditJob").addEventListener("submit", async function(e) {
         e.preventDefault();
         const fd = new FormData(e.target);
         await updateJob(jobId, Object.fromEntries(fd.entries()));
@@ -1003,16 +1419,17 @@ Lewis (Clearflow)`
       });
     }
 
-    // ---------- Events ----------
-    document.querySelectorAll(".tab").forEach(b =>
-      b.addEventListener("click", () => { activeTab = b.dataset.tab; render(); })
-    );
+    document.querySelectorAll(".tab").forEach(function(b) {
+      b.addEventListener("click", function() {
+        activeTab = b.dataset.tab;
+        render();
+      });
+    });
 
     $("btnAddCustomer").addEventListener("click", openAddCustomer);
-    $("btnAddJob").addEventListener("click", () => openAddJob());
+    $("btnAddJob").addEventListener("click", function() { openAddJob(); });
 
-    // ---------- Auth Boot ----------
-    onAuthStateChanged(auth, async (user) => {
+    onAuthStateChanged(auth, async function(user) {
       if (!user) return;
       uid = user.uid;
       await refreshAll();
