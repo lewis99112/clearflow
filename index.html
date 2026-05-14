@@ -95,6 +95,9 @@
   const dow = new Date(y,m,1).getDay();
   return dow === 0 ? 6 : dow - 1;
 }
+   function startOfMonth(y,m){
+  return startOfMonthDow(y,m);
+}
     function mapLink(a,p){ return "https://www.google.com/maps/search/?api=1&query="+encodeURIComponent(((a||"")+" "+(p||"")).trim()); }
     function effectiveStatus(j){ if(!j||!j.status)return "Due"; if(j.status==="Completed")return "Unpaid"; return j.status; }
     function isTs(v){ return v && typeof v.toDate === "function"; }
