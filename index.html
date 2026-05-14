@@ -87,6 +87,10 @@
     function addMonthsISO(iso,months){ const d=new Date(iso+"T00:00:00"); const od=d.getDate(); d.setMonth(d.getMonth()+months); if(d.getDate()!==od)d.setDate(0); return todayISO(d); }
     function pounds(n){ return "£"+Number(n||0).toFixed(2); }
     function freqLabel(f){ f=Number(f); if(f===0)return "One-off"; if(f===52)return "12 months"; return f+" weekly"; }
+    function monthName(m)
+    {
+  return ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][m];
+}
     function mapLink(a,p){ return "https://www.google.com/maps/search/?api=1&query="+encodeURIComponent(((a||"")+" "+(p||"")).trim()); }
     function effectiveStatus(j){ if(!j||!j.status)return "Due"; if(j.status==="Completed")return "Unpaid"; return j.status; }
     function isTs(v){ return v && typeof v.toDate === "function"; }
