@@ -6,6 +6,7 @@
   <title>RoundMate</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
+
 <body class="bg-slate-50 text-slate-900">
   <div class="max-w-5xl mx-auto p-4 pb-28">
     <div class="flex items-start justify-between gap-3">
@@ -13,6 +14,7 @@
         <h1 class="text-2xl font-bold tracking-tight">RoundMate</h1>
         <p id="subhead" class="text-sm text-slate-500">Loading…</p>
       </div>
+
       <div class="flex flex-wrap justify-end gap-2">
         <button id="btnAddCustomer" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">+ Customer</button>
         <button id="btnAddJob" class="px-3 py-2 rounded-xl bg-white text-slate-900 text-sm font-medium shadow border border-slate-200">+ Job</button>
@@ -34,23 +36,26 @@
     </div>
 
     <div id="notice" class="mt-4 hidden p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-sm"></div>
-    <div class="mt-4" id="content"></div>
+    <div id="content" class="mt-4"></div>
   </div>
 
   <div id="modalWrap" class="hidden fixed inset-0 bg-black/40 p-4 z-50">
     <div class="max-w-2xl mx-auto bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden max-h-[90vh] flex flex-col">
       <div class="p-4 border-b border-slate-200 flex items-center justify-between shrink-0">
-        <div class="font-semibold" id="modalTitle">Modal</div>
+        <div id="modalTitle" class="font-semibold">Modal</div>
         <button id="btnCloseModal" class="px-2 py-1 rounded-lg hover:bg-slate-100 text-2xl leading-none">×</button>
       </div>
-      <div class="p-4 overflow-auto" id="modalBody"></div>
+      <div id="modalBody" class="p-4 overflow-auto"></div>
     </div>
   </div>
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
     import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-auth.js";
-    import { getFirestore, collection, addDoc, getDocs, query, where, updateDoc, doc, deleteDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
+    import {
+      getFirestore, collection, addDoc, getDocs, query, where,
+      updateDoc, doc, deleteDoc, serverTimestamp
+    } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
 
     const firebaseConfig = {
       apiKey: "AIzaSyBKFnGGCcnCq9h-w8wAmvaTeecWidfD5zg",
@@ -61,134 +66,1288 @@
       appId: "1:234432711618:web:16bc2c6cef88c8da4be45b"
     };
 
-    const SERVICES = ["Window Clean","Conservatory","Gutter Clean","Fascia + Gutters","Fascia Only"];
+    const SERVICES = ["Window Clean", "Conservatory", "Gutter Clean", "Fascia + Gutters", "Fascia Only"];
     const FREQS = [0, 4, 8, 12, 52];
-    const PAYMENTS = ["Cash","Bank Transfer","Card","GoCardless"];
-    const SOURCES = ["Leaflet","Facebook","Google","Nextdoor","Referral","Other"];
+    const PAYMENTS = ["Cash", "Bank Transfer", "Card", "GoCardless"];
+    const SOURCES = ["Leaflet", "Facebook", "Google", "Nextdoor", "Referral", "Other"];
 
     const $ = (id) => document.getElementById(id);
     const content = $("content");
     const notice = $("notice");
     const subhead = $("subhead");
+
     const app = initializeApp(firebaseConfig);
     const auth = getAuth(app);
     const db = getFirestore(app);
 
-    let uid = null, activeTab = "today", customers = [], jobs = [], rounds = [];
-    let customerSort = "newest", customerSearch = "", customerFilter = "active";
-    let calYear = new Date().getFullYear(), calMonth = new Date().getMonth();
+    let uid = null;
+    let activeTab = "today";
+    let customers = [];
+    let jobs = [];
+    let rounds = [];
+    let customerSort = "newest";
+    let customerFilter = "active";
+    let customerSearch = "";
+    let calYear = new Date().getFullYear();
+    let calMonth = new Date().getMonth();
 
-    function setNotice(msg){ if(!msg){notice.classList.add("hidden"); notice.textContent=""; return;} notice.textContent=msg; notice.classList.remove("hidden"); }
-    function escHtml(s){ return String(s||"").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
-    function escAttr(s){ return escHtml(s); }
-    function pad2(n){ return String(n).padStart(2,"0"); }
-    function todayISO(d){ d=d||new Date(); const x=new Date(d.getFullYear(),d.getMonth(),d.getDate()); return x.getFullYear()+"-"+pad2(x.getMonth()+1)+"-"+pad2(x.getDate()); }
-    function addDaysISO(iso,days){ const d=new Date(iso+"T00:00:00"); d.setDate(d.getDate()+days); return todayISO(d); }
-    function addMonthsISO(iso,months){ const d=new Date(iso+"T00:00:00"); const od=d.getDate(); d.setMonth(d.getMonth()+months); if(d.getDate()!==od)d.setDate(0); return todayISO(d); }
-    function pounds(n){ return "£"+Number(n||0).toFixed(2); }
-    function freqLabel(f){ f=Number(f); if(f===0)return "One-off"; if(f===52)return "12 months"; return f+" weekly"; }
-    function monthName(m)
-    {
-  return ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][m];
-}
-    function startOfMonthDow(y,m){
-  const dow = new Date(y,m,1).getDay();
-  return dow === 0 ? 6 : dow - 1;
-}
-   function startOfMonth(y,m){
-  return startOfMonthDow(y,m);
-}
-    function mapLink(a,p){ return "https://www.google.com/maps/search/?api=1&query="+encodeURIComponent(((a||"")+" "+(p||"")).trim()); }
-    function effectiveStatus(j){ if(!j||!j.status)return "Due"; if(j.status==="Completed")return "Unpaid"; return j.status; }
-    function isTs(v){ return v && typeof v.toDate === "function"; }
-    function createdMs(x){ return x && isTs(x.createdAt) ? x.createdAt.toDate().getTime() : 0; }
-    function startOfWeekMonday(d){ d=d||new Date(); const x=new Date(d); x.setHours(0,0,0,0); const day=x.getDay(); x.setDate(x.getDate()+(day===0?-6:1-day)); return x; }
-    function startOfMonth(d){ d=d||new Date(); return new Date(d.getFullYear(),d.getMonth(),1); }
-    function endOfMonth(d){ d=d||new Date(); return new Date(d.getFullYear(),d.getMonth()+1,0,23,59,59,999); }
+    function escHtml(value) {
+      return String(value || "").replace(/[&<>"']/g, function(c) {
+        return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];
+      });
+    }
 
-    function getCustomerById(id){ for(let i=0;i<customers.length;i++) if(customers[i].id===id) return customers[i]; return null; }
-    function getRoundById(id){ for(let i=0;i<rounds.length;i++) if(rounds[i].id===id) return rounds[i]; return null; }
-    function sortJobsByDue(list){ return list.sort((a,b)=>String(a.dueDate||"").localeCompare(String(b.dueDate||""))); }
-    function paidThisWeekTotal(){ const s=startOfWeekMonday().getTime(); let t=0; jobs.forEach(j=>{ if(effectiveStatus(j)==="Paid"&&isTs(j.paidAt)&&j.paidAt.toDate().getTime()>=s)t+=Number(j.price||0); }); return t; }
-    function renderSubhead(){ subhead.textContent="Ready. Synced via Firebase. • Paid this week: "+pounds(paidThisWeekTotal()); }
-    function customerStats(id){ let cleans=0, paid=0, unpaid=0; jobs.forEach(j=>{ if(j.customerId!==id)return; const st=effectiveStatus(j); if(st==="Unpaid"||st==="Paid")cleans++; if(st==="Paid")paid+=Number(j.price||0); if(st==="Unpaid")unpaid+=Number(j.price||0); }); return {cleans,paid,unpaid}; }
-    function getNextJobForCustomer(id){ const today=todayISO(); const list=sortJobsByDue(jobs.filter(j=>j.customerId===id&&effectiveStatus(j)!=="Paid"&&j.dueDate>=today)); return list[0]||null; }
-    function getFutureJobsForRound(roundId, excludeJobId){ const today=todayISO(); return sortJobsByDue(jobs.filter(j=>j.roundId===roundId && effectiveStatus(j)!=="Paid" && j.dueDate>=today && (!excludeJobId || j.id!==excludeJobId))); }
-    function getNextDateForRound(roundId, excludeJobId){ const l=getFutureJobsForRound(roundId,excludeJobId); return l.length?l[0].dueDate:""; }
-    function jobsOnDate(iso){ return jobs.filter(j=>j.dueDate===iso && (effectiveStatus(j)==="Due"||effectiveStatus(j)==="Unpaid")); }
+    function escAttr(value) {
+      return escHtml(value);
+    }
 
-    function openModal(title, html){ $("modalTitle").textContent=title; $("modalBody").innerHTML=html; $("modalWrap").classList.remove("hidden"); }
-    function closeModal(){ $("modalWrap").classList.add("hidden"); $("modalBody").innerHTML=""; }
-    $("btnCloseModal").addEventListener("click",closeModal);
-    $("modalWrap").addEventListener("click",e=>{ if(e.target.id==="modalWrap")closeModal(); });
+    function pad2(n) {
+      return String(n).padStart(2, "0");
+    }
 
-    async function loadCustomers(){ customers=[]; const snap=await getDocs(query(collection(db,"customers"),where("ownerUid","==",uid))); snap.forEach(d=>customers.push({id:d.id,...d.data()})); customers.forEach(c=>{ if(c.active===undefined)c.active=true; }); customers.sort((a,b)=>createdMs(b)-createdMs(a)); }
-    async function loadJobs(){ jobs=[]; const snap=await getDocs(query(collection(db,"jobs"),where("ownerUid","==",uid))); snap.forEach(d=>jobs.push({id:d.id,...d.data()})); }
-    async function loadRounds(){ rounds=[]; const snap=await getDocs(query(collection(db,"rounds"),where("ownerUid","==",uid))); snap.forEach(d=>rounds.push({id:d.id,...d.data()})); rounds.sort((a,b)=>String(a.name||"").localeCompare(String(b.name||""))); }
-    async function refreshAll(){ await Promise.all([loadCustomers(),loadJobs(),loadRounds()]); renderSubhead(); render(); }
+    function todayISO(date) {
+      const d = date || new Date();
+      return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+    }
 
-    async function createRound(data){ await addDoc(collection(db,"rounds"),{ownerUid:uid,name:data.name||"",color:data.color||"#0f172a",createdAt:serverTimestamp()}); await loadRounds(); render(); }
-    async function deleteRound(id){ if(!confirm("Delete this round? Customers/jobs will keep working, but the round will be blank."))return; for(const c of customers.filter(c=>c.roundId===id))await updateDoc(doc(db,"customers",c.id),{roundId:""}); for(const j of jobs.filter(j=>j.roundId===id))await updateDoc(doc(db,"jobs",j.id),{roundId:""}); await deleteDoc(doc(db,"rounds",id)); await refreshAll(); }
-    async function createCustomer(data){ await addDoc(collection(db,"customers"),{ownerUid:uid,active:true,name:data.name||"",phone:data.phone||"",email:data.email||"",address:data.address||"",postcode:data.postcode||"",preferredPayment:data.preferredPayment||"Cash",source:data.source||"",notes:data.notes||"",roundId:data.roundId||"",createdAt:serverTimestamp()}); await loadCustomers(); render(); }
-    async function updateCustomer(id,data){ await updateDoc(doc(db,"customers",id),{name:data.name||"",phone:data.phone||"",email:data.email||"",address:data.address||"",postcode:data.postcode||"",preferredPayment:data.preferredPayment||"Cash",source:data.source||"",notes:data.notes||"",roundId:data.roundId||""}); await loadCustomers(); await loadJobs(); render(); }
-    async function setCustomerActive(id,val){ await updateDoc(doc(db,"customers",id),{active:!!val}); await loadCustomers(); render(); }
-    async function createJob(data){ await addDoc(collection(db,"jobs"),{ownerUid:uid,customerId:data.customerId,roundId:data.roundId||"",service:data.service||"Window Clean",frequencyWeeks:Number(data.frequencyWeeks||0),price:Number(data.price||0),dueDate:data.dueDate,paymentMethod:data.paymentMethod||"Cash",notes:data.notes||"",status:"Due",paid:false,createdAt:serverTimestamp()}); await loadJobs(); renderSubhead(); render(); }
-    async function updateJob(id,data){ await updateDoc(doc(db,"jobs",id),{customerId:data.customerId,roundId:data.roundId||"",service:data.service||"Window Clean",frequencyWeeks:Number(data.frequencyWeeks||0),price:Number(data.price||0),dueDate:data.dueDate,paymentMethod:data.paymentMethod||"Cash",notes:data.notes||""}); await loadJobs(); renderSubhead(); render(); }
-    async function deleteJob(id){ if(!confirm("Delete this job? This cannot be undone."))return; await deleteDoc(doc(db,"jobs",id)); await loadJobs(); renderSubhead(); render(); }
-    async function markPaid(id){ await updateDoc(doc(db,"jobs",id),{status:"Paid",paid:true,paidAt:serverTimestamp()}); await loadJobs(); renderSubhead(); render(); }
-    async function markDone(id){ const job=jobs.find(j=>j.id===id); if(!job)return; await updateDoc(doc(db,"jobs",id),{status:"Unpaid",doneAt:serverTimestamp()}); const fw=Number(job.frequencyWeeks||0); if(fw!==0){ const next=fw===52?addMonthsISO(job.dueDate||todayISO(),12):addDaysISO(job.dueDate||todayISO(),fw*7); await addDoc(collection(db,"jobs"),{ownerUid:uid,customerId:job.customerId,roundId:job.roundId||"",service:job.service||"Window Clean",frequencyWeeks:fw,price:Number(job.price||0),dueDate:next,paymentMethod:job.paymentMethod||"Cash",notes:job.notes||"",status:"Due",paid:false,createdAt:serverTimestamp()}); } await loadJobs(); renderSubhead(); render(); }
-    async function skipJob(id){ const job=jobs.find(j=>j.id===id); if(!job)return; const fw=Number(job.frequencyWeeks||0); if(fw===0){ if(confirm("This is a one-off job. Delete it instead?")) await deleteJob(id); return; } const next=fw===52?addMonthsISO(job.dueDate||todayISO(),12):addDaysISO(job.dueDate||todayISO(),fw*7); await updateDoc(doc(db,"jobs",id),{dueDate:next,skippedAt:serverTimestamp(),status:"Due"}); await loadJobs(); render(); }
+    function addDaysISO(iso, days) {
+      const d = new Date(iso + "T00:00:00");
+      d.setDate(d.getDate() + days);
+      return todayISO(d);
+    }
 
-    function messagePayment(job,c){return `Hi ${c&&c.name?c.name:"there"}, just a quick reminder your window clean payment of ${pounds(job&&job.price?job.price:0)} is still outstanding. Thanks, Lewis.`;}
-    function messageCleaned(job,c){return `Hi ${c&&c.name?c.name:"there"}, your windows have been cleaned today. Amount due is ${pounds(job&&job.price?job.price:0)}. Thanks, Lewis.`;}
-    function messageReview(c){return `Hi ${c&&c.name?c.name:"there"}, thanks again for using me for your window cleaning. If you're happy with the service, a quick Google review would really help. Thanks, Lewis.`;}
-    function messageInvoice(job,c){const parts=[]; if(c&&c.address)parts.push(c.address); if(c&&c.postcode)parts.push(c.postcode); return `Hi ${c&&c.name?c.name:"there"}\n\nYour ${job&&job.service?job.service:"Window Clean"} (${job&&job.dueDate?job.dueDate:""}) is done.\n\nAmount due: ${pounds(job&&job.price?job.price:0)}\n${parts.length?"Address: "+parts.join(", "):""}\n\nThanks, Lewis`;}
-    async function copyToClipboard(text){ try{await navigator.clipboard.writeText(text); setNotice("Message copied ✅"); setTimeout(()=>setNotice(""),2500);}catch(e){prompt("Copy this message:",text);} }
+    function addMonthsISO(iso, months) {
+      const d = new Date(iso + "T00:00:00");
+      const originalDay = d.getDate();
+      d.setMonth(d.getMonth() + months);
+      if (d.getDate() !== originalDay) d.setDate(0);
+      return todayISO(d);
+    }
 
-    function setTabsUI(){ document.querySelectorAll(".tab").forEach(b=>{const is=b.dataset.tab===activeTab; b.className="tab px-3 py-2 rounded-xl text-sm font-medium border "+(is?"bg-slate-900 text-white border-slate-900 shadow":"bg-white text-slate-900 border-slate-200");}); }
-    function pill(st){ if(st==="Paid")return `<span class="ml-2 text-xs px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200">Paid</span>`; if(st==="Unpaid")return `<span class="ml-2 text-xs px-2 py-1 rounded-lg bg-amber-50 text-amber-800 border border-amber-200">Unpaid</span>`; return ""; }
-    function rBadge(r){ if(!r)return""; const c=r.color||"#0f172a"; return `<span class="ml-2 text-xs px-2 py-1 rounded-lg border" style="background:${escAttr(c)}22;color:${escAttr(c)};border-color:${escAttr(c)}55">${escHtml(r.name)}</span>`; }
+    function pounds(n) {
+      return "£" + Number(n || 0).toFixed(2);
+    }
 
-    function jobCard(job){ const c=getCustomerById(job.customerId), r=getRoundById(job.roundId||""), st=effectiveStatus(job), notes=job.notes||(c&&c.notes?c.notes:""); const addr=c&&c.address?c.address:"", pc=c&&c.postcode?c.postcode:""; let btn=""; if(st==="Due")btn=`<button data-action="done" data-id="${job.id}" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">Done</button><button data-action="paid" data-id="${job.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Paid</button><button data-action="skipJob" data-id="${job.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Skip</button><button data-action="reschedule" data-id="${job.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Reschedule</button>`; else if(st==="Unpaid")btn=`<button data-action="paid" data-id="${job.id}" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">Paid</button><button data-action="paymentReminder" data-id="${job.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Reminder</button>`; btn+=`<button data-action="viewJob" data-id="${job.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">View</button><button data-action="editJob" data-id="${job.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Edit</button><button data-action="deleteJob" data-id="${job.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Delete</button><button data-action="invoice" data-id="${job.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Invoice</button>`; return `<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm mb-3"><div class="text-sm text-slate-500">${job.dueDate||""} • ${st}${pill(st)}${rBadge(r)}</div><div class="font-semibold">${escHtml(c&&c.name?c.name:"Unknown customer")}</div><div class="text-sm text-slate-700 mt-1">${escHtml(job.service||"")} • ${escHtml(freqLabel(job.frequencyWeeks))} • <span class="font-semibold">${pounds(job.price)}</span></div><div class="text-sm text-slate-600 mt-2">${escHtml(addr+(pc?", "+pc:""))}</div><a class="text-sm underline" target="_blank" href="${mapLink(addr,pc)}">Open in Maps</a>${notes?`<div class="text-sm text-slate-500 mt-2 whitespace-pre-wrap">${escHtml(notes)}</div>`:""}<div class="mt-3 flex flex-wrap gap-2">${btn}</div></div>`; }
+    function freqLabel(f) {
+      const n = Number(f);
+      if (n === 0) return "One-off";
+      if (n === 52) return "12 months";
+      return n + " weekly";
+    }
 
-    function customerCard(c){ const r=getRoundById(c.roundId||""), next=getNextJobForCustomer(c.id), stats=customerStats(c.id), active=c.active!==false, since=isTs(c.createdAt)?todayISO(c.createdAt.toDate()).split("-").reverse().join("/"):"—"; return `<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm mb-3 ${active?"":"opacity-70"}"><div class="flex items-start justify-between gap-3"><div><div class="font-semibold">${escHtml(c.name||"Unnamed")} ${active?"":"<span class='ml-2 text-xs px-2 py-1 rounded-lg bg-slate-100'>Disabled</span>"}${rBadge(r)}</div><div class="text-sm text-slate-600">${escHtml((c.address||"")+(c.postcode?" "+c.postcode:""))}</div><div class="text-sm text-slate-600">${escHtml(c.phone||"")}</div><div class="text-sm text-slate-500 mt-2">Next clean: ${next?next.dueDate+" • "+escHtml(next.service||"")+" • "+pounds(next.price):"No upcoming job"}</div><div class="text-xs text-slate-500 mt-2">${stats.cleans} cleans • Paid ${pounds(stats.paid)} • Unpaid ${pounds(stats.unpaid)} • Since ${since}</div>${c.notes?`<div class="text-sm text-slate-500 mt-2 whitespace-pre-wrap">${escHtml(c.notes)}</div>`:""}</div><div class="flex flex-col gap-2"><button data-action="viewCustomer" data-id="${c.id}" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">View</button><button data-action="editCustomer" data-id="${c.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Edit</button>${active?`<button data-action="disableCustomer" data-id="${c.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Disable</button>`:`<button data-action="enableCustomer" data-id="${c.id}" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">Enable</button>`}</div></div></div>`; }
+    function mapLink(address, postcode) {
+      const q = encodeURIComponent(((address || "") + " " + (postcode || "")).trim());
+      return "https://www.google.com/maps/search/?api=1&query=" + q;
+    }
 
-    function wireJobs(root){ root=root||content; root.querySelectorAll('[data-action="done"]').forEach(b=>b.onclick=()=>markDone(b.dataset.id)); root.querySelectorAll('[data-action="paid"]').forEach(b=>b.onclick=()=>markPaid(b.dataset.id)); root.querySelectorAll('[data-action="skipJob"]').forEach(b=>b.onclick=()=>skipJob(b.dataset.id)); root.querySelectorAll('[data-action="reschedule"]').forEach(b=>b.onclick=()=>openReschedule(b.dataset.id)); root.querySelectorAll('[data-action="editJob"]').forEach(b=>b.onclick=()=>openEditJob(b.dataset.id)); root.querySelectorAll('[data-action="deleteJob"]').forEach(b=>b.onclick=()=>deleteJob(b.dataset.id)); root.querySelectorAll('[data-action="viewJob"]').forEach(b=>b.onclick=()=>openJobDetails(b.dataset.id)); root.querySelectorAll('[data-action="invoice"]').forEach(b=>b.onclick=()=>{const j=jobs.find(x=>x.id===b.dataset.id), c=j?getCustomerById(j.customerId):null; copyToClipboard(messageInvoice(j,c));}); root.querySelectorAll('[data-action="paymentReminder"]').forEach(b=>b.onclick=()=>{const j=jobs.find(x=>x.id===b.dataset.id), c=j?getCustomerById(j.customerId):null; copyToClipboard(messagePayment(j,c));}); }
-    function wireCustomers(){ content.querySelectorAll('[data-action="disableCustomer"]').forEach(b=>b.onclick=()=>setCustomerActive(b.dataset.id,false)); content.querySelectorAll('[data-action="enableCustomer"]').forEach(b=>b.onclick=()=>setCustomerActive(b.dataset.id,true)); content.querySelectorAll('[data-action="editCustomer"]').forEach(b=>b.onclick=()=>openEditCustomer(b.dataset.id)); content.querySelectorAll('[data-action="viewCustomer"]').forEach(b=>b.onclick=()=>openCustomerDetails(b.dataset.id)); }
+    function effectiveStatus(job) {
+      if (!job || !job.status) return "Due";
+      if (job.status === "Completed") return "Unpaid";
+      return job.status;
+    }
 
-    function renderCustomers(){ let list=customers.slice(); if(customerFilter==="active")list=list.filter(c=>c.active!==false); if(customerFilter==="inactive")list=list.filter(c=>c.active===false); if(customerSearch.trim()){const q=customerSearch.toLowerCase(); list=list.filter(c=>String(c.name||"").toLowerCase().includes(q)||String(c.address||"").toLowerCase().includes(q)||String(c.postcode||"").toLowerCase().includes(q));} list.sort((a,b)=>customerSort==="name"?String(a.name||"").localeCompare(String(b.name||"")):customerSort==="round"?String((getRoundById(a.roundId||"")||{}).name||"").localeCompare(String((getRoundById(b.roundId||"")||{}).name||"")):createdMs(b)-createdMs(a)); content.innerHTML=`<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm mb-4"><div class="grid gap-3 md:grid-cols-[1fr_180px_180px]"><input id="customerSearch" value="${escAttr(customerSearch)}" placeholder="Search name, address, postcode..." class="px-3 py-2 rounded-xl border border-slate-200" /><select id="customerSort" class="px-3 py-2 rounded-xl border border-slate-200"><option value="newest" ${customerSort==="newest"?"selected":""}>Newest first</option><option value="name" ${customerSort==="name"?"selected":""}>A-Z</option><option value="round" ${customerSort==="round"?"selected":""}>Round</option></select><select id="customerFilter" class="px-3 py-2 rounded-xl border border-slate-200"><option value="active" ${customerFilter==="active"?"selected":""}>Active</option><option value="inactive" ${customerFilter==="inactive"?"selected":""}>Inactive</option><option value="all" ${customerFilter==="all"?"selected":""}>All</option></select></div></div>${list.length?list.map(customerCard).join(""):`<div class="p-4 rounded-2xl bg-white border border-slate-200 text-slate-600">No customers found.</div>`}`; $("customerSearch").oninput=e=>{customerSearch=e.target.value;renderCustomers();}; $("customerSort").onchange=e=>{customerSort=e.target.value;renderCustomers();}; $("customerFilter").onchange=e=>{customerFilter=e.target.value;renderCustomers();}; wireCustomers(); }
-    function renderJobs(list){ if(!list.length){content.innerHTML=`<div class="p-4 rounded-2xl bg-white border border-slate-200 text-slate-600">Nothing here.</div>`;return;} content.innerHTML=list.map(jobCard).join(""); wireJobs(); }
-    function renderRounds(){ const list=rounds.slice(); content.innerHTML=`<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm mb-4"><div class="font-semibold text-lg mb-3">Add Round</div><form id="fRound" class="grid gap-3 md:grid-cols-[1fr_140px_120px] items-end"><div class="grid gap-1"><label class="text-sm font-medium">Round name</label><input name="name" class="px-3 py-2 rounded-xl border border-slate-200" required /></div><div class="grid gap-1"><label class="text-sm font-medium">Colour</label><input name="color" type="color" value="#0f172a" class="h-11 rounded-xl border border-slate-200 bg-white" /></div><button class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">Save</button></form></div><div class="grid gap-3">${list.length?list.map(r=>{const aj=jobs.filter(j=>j.roundId===r.id&&effectiveStatus(j)!=="Paid"), value=aj.reduce((s,j)=>s+Number(j.price||0),0); return `<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm"><div class="flex items-center justify-between gap-3"><div><div class="font-semibold flex items-center gap-2"><span class="inline-block w-4 h-4 rounded-full border border-slate-300" style="background:${escAttr(r.color||"#0f172a")}"></span>${escHtml(r.name||"")}</div><div class="text-sm text-slate-500">${aj.length} active jobs • ${pounds(value)}</div></div><button data-action="deleteRound" data-id="${r.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Delete</button></div></div>`;}).join(""):`<div class="p-4 rounded-2xl bg-white border border-slate-200 text-slate-600">No rounds yet.</div>`}</div>`; $("fRound").onsubmit=async e=>{e.preventDefault(); await createRound(Object.fromEntries(new FormData(e.target).entries())); e.target.reset();}; content.querySelectorAll('[data-action="deleteRound"]').forEach(b=>b.onclick=()=>deleteRound(b.dataset.id)); }
+    function isTimestamp(value) {
+      return value && typeof value.toDate === "function";
+    }
 
-    function renderStats(){ const now=new Date(), ms=startOfMonth(now).getTime(), me=endOfMonth(now).getTime(); let pm=0,dm=0,ut=0,ac=customers.filter(c=>c.active!==false).length; jobs.forEach(j=>{const st=effectiveStatus(j); if(st==="Unpaid")ut+=Number(j.price||0); if(j.dueDate){const d=new Date(j.dueDate+"T00:00:00").getTime(); if(d>=ms&&d<=me&&st==="Due")dm+=Number(j.price||0);} if(st==="Paid"&&isTs(j.paidAt)){const t=j.paidAt.toDate().getTime(); if(t>=ms&&t<=me)pm+=Number(j.price||0);}}); content.innerHTML=`<div class="grid md:grid-cols-4 gap-3"><div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm"><div class="text-sm text-slate-500">Paid this month</div><div class="text-2xl font-bold">${pounds(pm)}</div></div><div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm"><div class="text-sm text-slate-500">Due this month</div><div class="text-2xl font-bold">${pounds(dm)}</div></div><div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm"><div class="text-sm text-slate-500">Unpaid total</div><div class="text-2xl font-bold">${pounds(ut)}</div></div><div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm"><div class="text-sm text-slate-500">Active customers</div><div class="text-2xl font-bold">${ac}</div></div></div>`; }
+    function createdTime(item) {
+      if (item && isTimestamp(item.createdAt)) return item.createdAt.toDate().getTime();
+      return 0;
+    }
 
-    function renderCalendar(){ const first=startOfMonthDow(calYear,calMonth), dim=new Date(calYear,calMonth+1,0).getDate(); let cells=[]; for(let i=0;i<42;i++){const dn=i-first+1; if(dn<1||dn>dim){cells.push(`<div class="min-h-[96px] bg-white/40 border border-slate-200 rounded-2xl p-2"></div>`); continue;} const iso=calYear+"-"+pad2(calMonth+1)+"-"+pad2(dn), list=jobsOnDate(iso); const items=list.slice(0,3).map(j=>{const c=getCustomerById(j.customerId); return `<div class="text-xs truncate"><span class="font-medium">${escHtml(c&&c.address?c.address:"No address")}</span><span class="text-slate-500"> • ${pounds(j.price)}</span></div>`;}).join(""); cells.push(`<button data-cal-date="${iso}" class="text-left min-h-[96px] bg-white border border-slate-200 rounded-2xl p-2 hover:border-slate-400"><div class="flex items-center justify-between"><div class="text-sm font-semibold">${dn}</div>${list.length?`<div class="text-[11px] px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200">${list.length}</div>`:""}</div><div class="mt-1 space-y-1">${items||`<div class="text-xs text-slate-400">No jobs</div>`}${list.length>3?`<div class="text-[11px] text-slate-500 mt-1">+${list.length-3} more</div>`:""}</div></button>`);} content.innerHTML=`<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm"><div class="flex items-center justify-between gap-3"><div class="font-semibold text-lg">${monthName(calMonth)} ${calYear}</div><div class="flex gap-2"><button id="calPrev" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">◀</button><button id="calToday" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Today</button><button id="calNext" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">▶</button></div></div><div class="mt-3 grid grid-cols-7 gap-2 text-xs text-slate-500"><div class="text-center">Mon</div><div class="text-center">Tue</div><div class="text-center">Wed</div><div class="text-center">Thu</div><div class="text-center">Fri</div><div class="text-center">Sat</div><div class="text-center">Sun</div></div><div class="mt-2 grid grid-cols-7 gap-2">${cells.join("")}</div></div>`; $("calPrev").onclick=()=>{calMonth--; if(calMonth<0){calMonth=11;calYear--;} renderCalendar();}; $("calNext").onclick=()=>{calMonth++; if(calMonth>11){calMonth=0;calYear++;} renderCalendar();}; $("calToday").onclick=()=>{const d=new Date();calYear=d.getFullYear();calMonth=d.getMonth();renderCalendar();}; content.querySelectorAll("[data-cal-date]").forEach(b=>b.onclick=()=>openCalendarDay(b.dataset.calDate)); }
-    function openCalendarDay(iso){ const list=sortJobsByDue(jobsOnDate(iso).slice()); const rows=list.length?list.map(j=>{const c=getCustomerById(j.customerId);return `<button data-day-job="${j.id}" class="w-full text-left border border-slate-200 rounded-xl p-3 hover:border-slate-400"><div class="font-semibold">${escHtml(c&&c.address?c.address:"Unknown address")} • ${pounds(j.price)}</div><div class="text-sm text-slate-600">${escHtml(j.service||"")} • ${escHtml(effectiveStatus(j))}</div></button>`;}).join(""):`<div class="text-sm text-slate-500">No jobs on this date.</div>`; openModal("Jobs on "+iso,`<div class="grid gap-3"><button id="btnAddJobOnDate" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">+ Add job on ${iso}</button>${rows}</div>`); $("btnAddJobOnDate").onclick=()=>{closeModal();openAddJob(iso);}; document.querySelectorAll("[data-day-job]").forEach(b=>b.onclick=()=>{closeModal();openJobDetails(b.dataset.dayJob);}); }
+    function weekStartMonday() {
+      const d = new Date();
+      d.setHours(0,0,0,0);
+      const day = d.getDay();
+      d.setDate(d.getDate() + (day === 0 ? -6 : 1 - day));
+      return d;
+    }
 
-    function render(){ setTabsUI(); renderSubhead(); if(activeTab==="customers"){renderCustomers();return;} if(activeTab==="rounds"){renderRounds();return;} if(activeTab==="calendar"){renderCalendar();return;} if(activeTab==="stats"){renderStats();return;} const t=todayISO(), we=addDaysISO(t,6); let list=jobs.slice(); if(activeTab!=="all")list=list.filter(j=>effectiveStatus(j)!=="Paid"); if(activeTab==="unpaid"){list=list.filter(j=>effectiveStatus(j)==="Unpaid"); renderJobs(sortJobsByDue(list)); return;} if(activeTab==="today")list=list.filter(j=>effectiveStatus(j)==="Due"&&j.dueDate===t); else if(activeTab==="week")list=list.filter(j=>effectiveStatus(j)==="Due"&&j.dueDate>=t&&j.dueDate<=we); else if(activeTab==="overdue")list=list.filter(j=>effectiveStatus(j)==="Due"&&j.dueDate<t); renderJobs(sortJobsByDue(list)); }
+    function monthStartDate() {
+      const d = new Date();
+      return new Date(d.getFullYear(), d.getMonth(), 1);
+    }
 
-    function roundOptionsHtml(selected){ let h=`<option value="">-- No Round --</option>`; rounds.forEach(r=>h+=`<option value="${r.id}" ${selected===r.id?"selected":""}>${escHtml(r.name)}</option>`); return h; }
-    function customerOptionsHtml(selected, activeOnly){ let list=customers.slice(); if(activeOnly)list=list.filter(c=>c.active!==false); return list.map(c=>`<option value="${c.id}" ${selected===c.id?"selected":""}>${escHtml(c.name)}</option>`).join(""); }
-    function sourceOptionsHtml(selected){ return SOURCES.map(s=>`<option ${selected===s?"selected":""}>${s}</option>`).join(""); }
-    function setupRoundAutoFill(formId,currentJobId){ const f=$(formId); if(!f)return; const rs=f.querySelector('[name="roundId"]'), due=f.querySelector('[name="dueDate"]'), hint=f.querySelector('[data-round-hint]'), cs=f.querySelector('[name="customerId"]'); function upd(){const rid=rs?rs.value:""; if(!rid){if(hint)hint.textContent="No round selected.";return;} const next=getNextDateForRound(rid,currentJobId||""), count=getFutureJobsForRound(rid,currentJobId||"").length; if(hint)hint.textContent=next?"Next round date: "+next+" ("+count+" job"+(count===1?"":"s")+")":"No future jobs found in this round yet."; if(next)due.value=next;} if(cs&&rs)cs.onchange=()=>{const c=getCustomerById(cs.value); if(c&&c.roundId)rs.value=c.roundId; upd();}; if(rs)rs.onchange=upd; upd(); }
+    function monthEndDate() {
+      const d = new Date();
+      return new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999);
+    }
 
-    function openAddCustomer(){ openModal("Add Customer",`<form id="fCustomer" class="grid gap-3"><div class="grid gap-1"><label class="text-sm font-medium">Name</label><input name="name" class="px-3 py-2 rounded-xl border border-slate-200" required /></div><div class="grid grid-cols-2 gap-3"><div class="grid gap-1"><label class="text-sm font-medium">Phone</label><input name="phone" class="px-3 py-2 rounded-xl border border-slate-200" /></div><div class="grid gap-1"><label class="text-sm font-medium">Email</label><input name="email" type="email" class="px-3 py-2 rounded-xl border border-slate-200" /></div></div><div class="grid gap-1"><label class="text-sm font-medium">Address</label><input name="address" class="px-3 py-2 rounded-xl border border-slate-200" /></div><div class="grid grid-cols-2 gap-3"><div class="grid gap-1"><label class="text-sm font-medium">Postcode</label><input name="postcode" class="px-3 py-2 rounded-xl border border-slate-200" /></div><div class="grid gap-1"><label class="text-sm font-medium">Payment</label><select name="preferredPayment" class="px-3 py-2 rounded-xl border border-slate-200">${PAYMENTS.map(p=>`<option>${p}</option>`).join("")}</select></div></div><div class="grid grid-cols-2 gap-3"><div class="grid gap-1"><label class="text-sm font-medium">Source</label><select name="source" class="px-3 py-2 rounded-xl border border-slate-200">${sourceOptionsHtml("")}</select></div><div class="grid gap-1"><label class="text-sm font-medium">Default round</label><select name="roundId" class="px-3 py-2 rounded-xl border border-slate-200">${roundOptionsHtml("")}</select></div></div><div class="grid gap-1"><label class="text-sm font-medium">Notes</label><textarea name="notes" rows="3" class="px-3 py-2 rounded-xl border border-slate-200"></textarea></div><button class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">Save</button></form>`); $("fCustomer").onsubmit=async e=>{e.preventDefault(); await createCustomer(Object.fromEntries(new FormData(e.target).entries())); closeModal(); activeTab="customers"; render();}; }
-    function openEditCustomer(id){ const c=getCustomerById(id); if(!c)return; openModal("Edit Customer",`<form id="fEditCustomer" class="grid gap-3"><div class="grid gap-1"><label class="text-sm font-medium">Name</label><input name="name" value="${escAttr(c.name||"")}" class="px-3 py-2 rounded-xl border border-slate-200" required /></div><div class="grid grid-cols-2 gap-3"><div class="grid gap-1"><label class="text-sm font-medium">Phone</label><input name="phone" value="${escAttr(c.phone||"")}" class="px-3 py-2 rounded-xl border border-slate-200" /></div><div class="grid gap-1"><label class="text-sm font-medium">Email</label><input name="email" type="email" value="${escAttr(c.email||"")}" class="px-3 py-2 rounded-xl border border-slate-200" /></div></div><div class="grid gap-1"><label class="text-sm font-medium">Address</label><input name="address" value="${escAttr(c.address||"")}" class="px-3 py-2 rounded-xl border border-slate-200" /></div><div class="grid grid-cols-2 gap-3"><div class="grid gap-1"><label class="text-sm font-medium">Postcode</label><input name="postcode" value="${escAttr(c.postcode||"")}" class="px-3 py-2 rounded-xl border border-slate-200" /></div><div class="grid gap-1"><label class="text-sm font-medium">Payment</label><select name="preferredPayment" class="px-3 py-2 rounded-xl border border-slate-200">${PAYMENTS.map(p=>`<option ${((c.preferredPayment||"Cash")===p)?"selected":""}>${p}</option>`).join("")}</select></div></div><div class="grid grid-cols-2 gap-3"><div class="grid gap-1"><label class="text-sm font-medium">Source</label><select name="source" class="px-3 py-2 rounded-xl border border-slate-200">${sourceOptionsHtml(c.source||"")}</select></div><div class="grid gap-1"><label class="text-sm font-medium">Default round</label><select name="roundId" class="px-3 py-2 rounded-xl border border-slate-200">${roundOptionsHtml(c.roundId||"")}</select></div></div><div class="grid gap-1"><label class="text-sm font-medium">Notes</label><textarea name="notes" rows="3" class="px-3 py-2 rounded-xl border border-slate-200">${escHtml(c.notes||"")}</textarea></div><button class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">Save</button></form>`); $("fEditCustomer").onsubmit=async e=>{e.preventDefault(); await updateCustomer(id,Object.fromEntries(new FormData(e.target).entries())); closeModal();}; }
-    function openAddJob(prefillDate,prefillCustomerId){ const active=customers.filter(c=>c.active!==false); if(!active.length){setNotice("Add a customer first."); activeTab="customers"; render(); return;} const cid=prefillCustomerId||active[0].id, cust=getCustomerById(cid), rid=cust&&cust.roundId?cust.roundId:"", date=prefillDate||getNextDateForRound(rid,"")||todayISO(); openModal("Add Job",`<form id="fJob" class="grid gap-3"><div class="grid gap-1"><label class="text-sm font-medium">Customer</label><select name="customerId" class="px-3 py-2 rounded-xl border border-slate-200" required>${customerOptionsHtml(cid,true)}</select></div><div class="grid grid-cols-2 gap-3"><div class="grid gap-1"><label class="text-sm font-medium">Service</label><select name="service" class="px-3 py-2 rounded-xl border border-slate-200">${SERVICES.map(s=>`<option>${escHtml(s)}</option>`).join("")}</select></div><div class="grid gap-1"><label class="text-sm font-medium">Frequency</label><select name="frequencyWeeks" class="px-3 py-2 rounded-xl border border-slate-200">${FREQS.map(f=>`<option value="${f}">${escHtml(freqLabel(f))}</option>`).join("")}</select></div></div><div class="grid gap-1"><label class="text-sm font-medium">Round</label><select name="roundId" class="px-3 py-2 rounded-xl border border-slate-200">${roundOptionsHtml(rid)}</select><div data-round-hint class="text-xs text-slate-500">No round selected.</div></div><div class="grid grid-cols-2 gap-3"><div class="grid gap-1"><label class="text-sm font-medium">Due date</label><input name="dueDate" type="date" class="px-3 py-2 rounded-xl border border-slate-200" value="${date}" /></div><div class="grid gap-1"><label class="text-sm font-medium">Price (£)</label><input name="price" type="number" step="0.01" class="px-3 py-2 rounded-xl border border-slate-200" /></div></div><div class="grid gap-1"><label class="text-sm font-medium">Payment method</label><select name="paymentMethod" class="px-3 py-2 rounded-xl border border-slate-200">${PAYMENTS.map(p=>`<option>${p}</option>`).join("")}</select></div><div class="grid gap-1"><label class="text-sm font-medium">Notes</label><textarea name="notes" rows="3" class="px-3 py-2 rounded-xl border border-slate-200"></textarea></div><button class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">Save</button></form>`); setupRoundAutoFill("fJob",""); $("fJob").onsubmit=async e=>{e.preventDefault(); await createJob(Object.fromEntries(new FormData(e.target).entries())); closeModal(); activeTab="today"; render();}; }
-    function openEditJob(id){ const j=jobs.find(x=>x.id===id); if(!j)return; openModal("Edit Job",`<form id="fEditJob" class="grid gap-3"><div class="grid gap-1"><label class="text-sm font-medium">Customer</label><select name="customerId" class="px-3 py-2 rounded-xl border border-slate-200" required>${customerOptionsHtml(j.customerId,false)}</select></div><div class="grid grid-cols-2 gap-3"><div class="grid gap-1"><label class="text-sm font-medium">Service</label><select name="service" class="px-3 py-2 rounded-xl border border-slate-200">${SERVICES.map(s=>`<option ${(j.service===s)?"selected":""}>${escHtml(s)}</option>`).join("")}</select></div><div class="grid gap-1"><label class="text-sm font-medium">Frequency</label><select name="frequencyWeeks" class="px-3 py-2 rounded-xl border border-slate-200">${FREQS.map(f=>`<option value="${f}" ${(Number(j.frequencyWeeks)===Number(f))?"selected":""}>${escHtml(freqLabel(f))}</option>`).join("")}</select></div></div><div class="grid gap-1"><label class="text-sm font-medium">Round</label><select name="roundId" class="px-3 py-2 rounded-xl border border-slate-200">${roundOptionsHtml(j.roundId||"")}</select><div data-round-hint class="text-xs text-slate-500">No round selected.</div></div><div class="grid grid-cols-2 gap-3"><div class="grid gap-1"><label class="text-sm font-medium">Due date</label><input name="dueDate" type="date" class="px-3 py-2 rounded-xl border border-slate-200" value="${j.dueDate||todayISO()}" /></div><div class="grid gap-1"><label class="text-sm font-medium">Price (£)</label><input name="price" type="number" step="0.01" class="px-3 py-2 rounded-xl border border-slate-200" value="${Number(j.price||0)}" /></div></div><div class="grid gap-1"><label class="text-sm font-medium">Payment method</label><select name="paymentMethod" class="px-3 py-2 rounded-xl border border-slate-200">${PAYMENTS.map(p=>`<option ${((j.paymentMethod||"Cash")===p)?"selected":""}>${p}</option>`).join("")}</select></div><div class="grid gap-1"><label class="text-sm font-medium">Notes</label><textarea name="notes" rows="3" class="px-3 py-2 rounded-xl border border-slate-200">${escHtml(j.notes||"")}</textarea></div><button class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">Save</button></form>`); setupRoundAutoFill("fEditJob",id); $("fEditJob").onsubmit=async e=>{e.preventDefault(); await updateJob(id,Object.fromEntries(new FormData(e.target).entries())); closeModal();}; }
-    function openReschedule(id){ const j=jobs.find(x=>x.id===id); if(!j)return; openModal("Reschedule Job",`<form id="fReschedule" class="grid gap-3"><div class="text-sm text-slate-600">Current date: ${escHtml(j.dueDate||"")}</div><input name="dueDate" type="date" value="${escAttr(j.dueDate||todayISO())}" class="px-3 py-2 rounded-xl border border-slate-200" /><button class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">Save</button></form>`); $("fReschedule").onsubmit=async e=>{e.preventDefault(); await updateDoc(doc(db,"jobs",id),{dueDate:new FormData(e.target).get("dueDate")}); await loadJobs(); closeModal(); render();}; }
-    function openCustomerDetails(id){ const c=getCustomerById(id); if(!c)return; const stats=customerStats(c.id), next=getNextJobForCustomer(c.id), since=isTs(c.createdAt)?todayISO(c.createdAt.toDate()).split("-").reverse().join("/"):"—"; openModal(c.name||"Customer",`<div class="grid gap-4"><div class="grid gap-1 text-sm"><div><b>Address:</b> ${escHtml((c.address||"")+(c.postcode?" "+c.postcode:""))}</div><div><b>Phone:</b> ${escHtml(c.phone||"")}</div><div><b>Payment:</b> ${escHtml(c.preferredPayment||"Cash")}</div><div><b>Source:</b> ${escHtml(c.source||"—")}</div><div><b>Customer since:</b> ${since}</div></div><div class="grid grid-cols-3 gap-2"><div class="p-3 rounded-xl bg-slate-50 border border-slate-200"><div class="text-xs text-slate-500">Cleans</div><div class="font-bold">${stats.cleans}</div></div><div class="p-3 rounded-xl bg-slate-50 border border-slate-200"><div class="text-xs text-slate-500">Paid</div><div class="font-bold">${pounds(stats.paid)}</div></div><div class="p-3 rounded-xl bg-slate-50 border border-slate-200"><div class="text-xs text-slate-500">Unpaid</div><div class="font-bold">${pounds(stats.unpaid)}</div></div></div><div class="text-sm"><b>Next clean:</b> ${next?next.dueDate+" • "+escHtml(next.service||"")+" • "+pounds(next.price):"No upcoming clean"}</div>${c.notes?`<div class="text-sm"><b>Notes:</b><div class="whitespace-pre-wrap text-slate-600">${escHtml(c.notes)}</div></div>`:""}<div class="flex flex-wrap gap-2"><button id="detailEditCustomer" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">Edit</button><button id="detailAddJob" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Add job</button></div></div>`); $("detailEditCustomer").onclick=()=>{closeModal();openEditCustomer(id);}; $("detailAddJob").onclick=()=>{closeModal();openAddJob("",id);}; }
-    function openJobDetails(id){ const j=jobs.find(x=>x.id===id); if(!j)return; const c=getCustomerById(j.customerId), st=effectiveStatus(j); openModal("Job Details",`<div class="grid gap-4"><div class="grid gap-1 text-sm"><div><b>Customer:</b> ${escHtml(c&&c.name?c.name:"Unknown")}</div><div><b>Address:</b> ${escHtml(c?((c.address||"")+(c.postcode?" "+c.postcode:"")):"")}</div><div><b>Date:</b> ${escHtml(j.dueDate||"")}</div><div><b>Service:</b> ${escHtml(j.service||"")}</div><div><b>Price:</b> ${pounds(j.price)}</div><div><b>Status:</b> ${escHtml(st)}</div>${j.notes?`<div><b>Job notes:</b><div class="whitespace-pre-wrap text-slate-600">${escHtml(j.notes)}</div></div>`:""}${c&&c.notes?`<div><b>Customer notes:</b><div class="whitespace-pre-wrap text-slate-600">${escHtml(c.notes)}</div></div>`:""}</div><div class="flex flex-wrap gap-2"><button data-action="done" data-id="${j.id}" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">Done</button><button data-action="paid" data-id="${j.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Paid</button><button data-action="cleanedToday" data-id="${j.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Cleaned text</button><button data-action="paymentReminder" data-id="${j.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Reminder</button><button data-action="reviewRequest" data-id="${j.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Review text</button><button data-action="editJob" data-id="${j.id}" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Edit</button></div></div>`); wireJobs($("modalBody")); }
+    function monthName(monthIndex) {
+      return ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][monthIndex];
+    }
 
-    function downloadCSV(filename,rows){ if(!rows.length){alert("Nothing to export.");return;} const h=Object.keys(rows[0]); const csv=[h.join(",")].concat(rows.map(r=>h.map(k=>'"'+String(r[k]===undefined||r[k]===null?"":r[k]).replace(/"/g,'""')+'"').join(","))).join("\n"); const blob=new Blob([csv],{type:"text/csv;charset=utf-8;"}); const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=filename; a.click(); }
-    $("btnExportCustomers").onclick=()=>downloadCSV("roundmate-customers.csv",customers.map(c=>{const r=getRoundById(c.roundId||""),s=customerStats(c.id); return {name:c.name||"",phone:c.phone||"",email:c.email||"",address:c.address||"",postcode:c.postcode||"",payment:c.preferredPayment||"",source:c.source||"",round:r?r.name:"",notes:c.notes||"",active:c.active!==false?"active":"disabled",cleans:s.cleans,paidTotal:s.paid,unpaidTotal:s.unpaid};}));
-    $("btnExportJobs").onclick=()=>downloadCSV("roundmate-jobs.csv",jobs.map(j=>{const c=getCustomerById(j.customerId),r=getRoundById(j.roundId||""); return {customerName:c&&c.name?c.name:"",address:c&&c.address?c.address:"",postcode:c&&c.postcode?c.postcode:"",service:j.service||"",dueDate:j.dueDate||"",frequency:freqLabel(j.frequencyWeeks),price:j.price||"",status:effectiveStatus(j),paid:j.paid?"yes":"no",paymentMethod:j.paymentMethod||"",round:r&&r.name?r.name:"",notes:j.notes||""};}));
+    function calendarStartOffset(year, monthIndex) {
+      const dow = new Date(year, monthIndex, 1).getDay(); // 0 Sun
+      return dow === 0 ? 6 : dow - 1; // Monday = 0
+    }
 
-    document.querySelectorAll(".tab").forEach(b=>b.onclick=()=>{activeTab=b.dataset.tab; render();});
-    $("btnAddCustomer").onclick=openAddCustomer;
-    $("btnAddJob").onclick=()=>openAddJob();
-    onAuthStateChanged(auth, async user=>{ if(!user)return; uid=user.uid; await refreshAll(); });
-    async function boot(){ subhead.textContent="Signing in…"; try{await signInAnonymously(auth);}catch(e){subhead.textContent="Auth error. Enable Anonymous Auth in Firebase."; console.error(e);} }
+    function daysInCalendarMonth(year, monthIndex) {
+      return new Date(year, monthIndex + 1, 0).getDate();
+    }
+
+    function isoFromYMD(year, monthIndex, day) {
+      return year + "-" + pad2(monthIndex + 1) + "-" + pad2(day);
+    }
+
+    function setNotice(msg) {
+      if (!msg) {
+        notice.classList.add("hidden");
+        notice.textContent = "";
+        return;
+      }
+      notice.textContent = msg;
+      notice.classList.remove("hidden");
+    }
+
+    function openModal(title, bodyHtml) {
+      $("modalTitle").textContent = title;
+      $("modalBody").innerHTML = bodyHtml;
+      $("modalWrap").classList.remove("hidden");
+    }
+
+    function closeModal() {
+      $("modalWrap").classList.add("hidden");
+      $("modalBody").innerHTML = "";
+    }
+
+    $("btnCloseModal").addEventListener("click", closeModal);
+    $("modalWrap").addEventListener("click", function(e) {
+      if (e.target.id === "modalWrap") closeModal();
+    });
+
+    function getCustomerById(id) {
+      return customers.find(c => c.id === id) || null;
+    }
+
+    function getRoundById(id) {
+      return rounds.find(r => r.id === id) || null;
+    }
+
+    function sortJobsByDue(list) {
+      return list.sort((a,b) => String(a.dueDate || "").localeCompare(String(b.dueDate || "")));
+    }
+
+    function customerStats(customerId) {
+      let cleans = 0;
+      let paid = 0;
+      let unpaid = 0;
+
+      jobs.forEach(j => {
+        if (j.customerId !== customerId) return;
+        const st = effectiveStatus(j);
+        if (st === "Unpaid" || st === "Paid") cleans++;
+        if (st === "Paid") paid += Number(j.price || 0);
+        if (st === "Unpaid") unpaid += Number(j.price || 0);
+      });
+
+      return { cleans, paid, unpaid };
+    }
+
+    function getNextJobForCustomer(customerId) {
+      const today = todayISO();
+      const list = sortJobsByDue(jobs.filter(j => {
+        const st = effectiveStatus(j);
+        return j.customerId === customerId && st !== "Paid" && String(j.dueDate || "") >= today;
+      }));
+      return list[0] || null;
+    }
+
+    function getFutureJobsForRound(roundId, excludeJobId) {
+      const today = todayISO();
+      return sortJobsByDue(jobs.filter(j => {
+        if (!roundId) return false;
+        if (excludeJobId && j.id === excludeJobId) return false;
+        const st = effectiveStatus(j);
+        return j.roundId === roundId && st !== "Paid" && String(j.dueDate || "") >= today;
+      }));
+    }
+
+    function getNextDateForRound(roundId, excludeJobId) {
+      const list = getFutureJobsForRound(roundId, excludeJobId);
+      return list.length ? list[0].dueDate : "";
+    }
+
+    function jobsOnDate(iso) {
+      return jobs.filter(j => {
+        const st = effectiveStatus(j);
+        return j.dueDate === iso && (st === "Due" || st === "Unpaid");
+      });
+    }
+
+    function paidThisWeekTotal() {
+      const start = weekStartMonday().getTime();
+      let total = 0;
+      jobs.forEach(j => {
+        if (effectiveStatus(j) !== "Paid") return;
+        if (!isTimestamp(j.paidAt)) return;
+        if (j.paidAt.toDate().getTime() >= start) total += Number(j.price || 0);
+      });
+      return total;
+    }
+
+    function renderSubhead() {
+      subhead.textContent = "Ready. Synced via Firebase. • Paid this week: " + pounds(paidThisWeekTotal());
+    }
+
+    async function loadCustomers() {
+      customers = [];
+      const snap = await getDocs(query(collection(db, "customers"), where("ownerUid", "==", uid)));
+      snap.forEach(d => customers.push({ id: d.id, ...d.data() }));
+      customers.forEach(c => { if (c.active === undefined) c.active = true; });
+      customers.sort((a,b) => createdTime(b) - createdTime(a));
+    }
+
+    async function loadJobs() {
+      jobs = [];
+      const snap = await getDocs(query(collection(db, "jobs"), where("ownerUid", "==", uid)));
+      snap.forEach(d => jobs.push({ id: d.id, ...d.data() }));
+    }
+
+    async function loadRounds() {
+      rounds = [];
+      const snap = await getDocs(query(collection(db, "rounds"), where("ownerUid", "==", uid)));
+      snap.forEach(d => rounds.push({ id: d.id, ...d.data() }));
+      rounds.sort((a,b) => String(a.name || "").localeCompare(String(b.name || "")));
+    }
+
+    async function refreshAll() {
+      await Promise.all([loadCustomers(), loadJobs(), loadRounds()]);
+      renderSubhead();
+      render();
+    }
+
+    async function createRound(data) {
+      await addDoc(collection(db, "rounds"), {
+        ownerUid: uid,
+        name: data.name || "",
+        color: data.color || "#0f172a",
+        createdAt: serverTimestamp()
+      });
+      await loadRounds();
+      render();
+    }
+
+    async function deleteRound(roundId) {
+      if (!confirm("Delete this round? Customers/jobs will keep working, but the round will be blank.")) return;
+
+      for (const c of customers.filter(c => c.roundId === roundId)) {
+        await updateDoc(doc(db, "customers", c.id), { roundId: "" });
+      }
+
+      for (const j of jobs.filter(j => j.roundId === roundId)) {
+        await updateDoc(doc(db, "jobs", j.id), { roundId: "" });
+      }
+
+      await deleteDoc(doc(db, "rounds", roundId));
+      await refreshAll();
+    }
+
+    async function createCustomer(data) {
+      await addDoc(collection(db, "customers"), {
+        ownerUid: uid,
+        active: true,
+        name: data.name || "",
+        phone: data.phone || "",
+        email: data.email || "",
+        address: data.address || "",
+        postcode: data.postcode || "",
+        preferredPayment: data.preferredPayment || "Cash",
+        source: data.source || "",
+        notes: data.notes || "",
+        roundId: data.roundId || "",
+        createdAt: serverTimestamp()
+      });
+
+      await loadCustomers();
+      activeTab = "customers";
+      render();
+    }
+
+    async function updateCustomer(customerId, data) {
+      await updateDoc(doc(db, "customers", customerId), {
+        name: data.name || "",
+        phone: data.phone || "",
+        email: data.email || "",
+        address: data.address || "",
+        postcode: data.postcode || "",
+        preferredPayment: data.preferredPayment || "Cash",
+        source: data.source || "",
+        notes: data.notes || "",
+        roundId: data.roundId || ""
+      });
+
+      await loadCustomers();
+      await loadJobs();
+      render();
+    }
+
+    async function setCustomerActive(customerId, active) {
+      await updateDoc(doc(db, "customers", customerId), { active: !!active });
+      await loadCustomers();
+      render();
+    }
+
+    async function createJob(data) {
+      await addDoc(collection(db, "jobs"), {
+        ownerUid: uid,
+        customerId: data.customerId,
+        roundId: data.roundId || "",
+        service: data.service || "Window Clean",
+        frequencyWeeks: Number(data.frequencyWeeks || 0),
+        price: Number(data.price || 0),
+        dueDate: data.dueDate,
+        paymentMethod: data.paymentMethod || "Cash",
+        notes: data.notes || "",
+        status: "Due",
+        paid: false,
+        createdAt: serverTimestamp()
+      });
+
+      await loadJobs();
+      activeTab = "today";
+      renderSubhead();
+      render();
+    }
+
+    async function updateJob(jobId, data) {
+      await updateDoc(doc(db, "jobs", jobId), {
+        customerId: data.customerId,
+        roundId: data.roundId || "",
+        service: data.service || "Window Clean",
+        frequencyWeeks: Number(data.frequencyWeeks || 0),
+        price: Number(data.price || 0),
+        dueDate: data.dueDate,
+        paymentMethod: data.paymentMethod || "Cash",
+        notes: data.notes || ""
+      });
+
+      await loadJobs();
+      renderSubhead();
+      render();
+    }
+
+    async function deleteJob(jobId) {
+      if (!confirm("Delete this job? This cannot be undone.")) return;
+      await deleteDoc(doc(db, "jobs", jobId));
+      await loadJobs();
+      renderSubhead();
+      render();
+    }
+
+    async function markPaid(jobId) {
+      await updateDoc(doc(db, "jobs", jobId), {
+        status: "Paid",
+        paid: true,
+        paidAt: serverTimestamp()
+      });
+
+      await loadJobs();
+      renderSubhead();
+      render();
+    }
+
+    async function markDone(jobId) {
+      const job = jobs.find(j => j.id === jobId);
+      if (!job) return;
+
+      await updateDoc(doc(db, "jobs", jobId), {
+        status: "Unpaid",
+        doneAt: serverTimestamp()
+      });
+
+      const fw = Number(job.frequencyWeeks || 0);
+      if (fw !== 0) {
+        const nextDue = fw === 52
+          ? addMonthsISO(job.dueDate || todayISO(), 12)
+          : addDaysISO(job.dueDate || todayISO(), fw * 7);
+
+        await addDoc(collection(db, "jobs"), {
+          ownerUid: uid,
+          customerId: job.customerId,
+          roundId: job.roundId || "",
+          service: job.service || "Window Clean",
+          frequencyWeeks: fw,
+          price: Number(job.price || 0),
+          dueDate: nextDue,
+          paymentMethod: job.paymentMethod || "Cash",
+          notes: job.notes || "",
+          status: "Due",
+          paid: false,
+          createdAt: serverTimestamp()
+        });
+      }
+
+      await loadJobs();
+      renderSubhead();
+      render();
+    }
+
+    async function skipJob(jobId) {
+      const job = jobs.find(j => j.id === jobId);
+      if (!job) return;
+
+      const fw = Number(job.frequencyWeeks || 0);
+      if (fw === 0) {
+        if (confirm("This is a one-off job. Delete it instead?")) await deleteJob(jobId);
+        return;
+      }
+
+      const nextDue = fw === 52
+        ? addMonthsISO(job.dueDate || todayISO(), 12)
+        : addDaysISO(job.dueDate || todayISO(), fw * 7);
+
+      await updateDoc(doc(db, "jobs", jobId), {
+        dueDate: nextDue,
+        skippedAt: serverTimestamp(),
+        status: "Due"
+      });
+
+      await loadJobs();
+      render();
+    }
+
+    function messagePayment(job, customer) {
+      return "Hi " + (customer && customer.name ? customer.name : "there") +
+        ", just a quick reminder your window clean payment of " +
+        pounds(job && job.price ? job.price : 0) +
+        " is still outstanding. Thanks, Lewis.";
+    }
+
+    function messageCleaned(job, customer) {
+      return "Hi " + (customer && customer.name ? customer.name : "there") +
+        ", your windows have been cleaned today. Amount due is " +
+        pounds(job && job.price ? job.price : 0) +
+        ". Thanks, Lewis.";
+    }
+
+    function messageReview(customer) {
+      return "Hi " + (customer && customer.name ? customer.name : "there") +
+        ", thanks again for using me for your window cleaning. If you're happy with the service, a quick Google review would really help. Thanks, Lewis.";
+    }
+
+    function messageInvoice(job, customer) {
+      const parts = [];
+      if (customer && customer.address) parts.push(customer.address);
+      if (customer && customer.postcode) parts.push(customer.postcode);
+
+      return "Hi " + (customer && customer.name ? customer.name : "there") + "\n\n" +
+        "Your " + (job && job.service ? job.service : "Window Clean") +
+        " (" + (job && job.dueDate ? job.dueDate : "") + ") is done.\n\n" +
+        "Amount due: " + pounds(job && job.price ? job.price : 0) + "\n" +
+        (parts.length ? "Address: " + parts.join(", ") + "\n" : "") +
+        "\nThanks, Lewis";
+    }
+
+    async function copyToClipboard(text) {
+      try {
+        await navigator.clipboard.writeText(text);
+        setNotice("Message copied ✅");
+        setTimeout(() => setNotice(""), 2500);
+      } catch (e) {
+        prompt("Copy this message:", text);
+      }
+    }
+
+    function roundOptionsHtml(selectedId) {
+      let html = '<option value="">-- No Round --</option>';
+      rounds.forEach(r => {
+        html += '<option value="' + r.id + '" ' + (selectedId === r.id ? "selected" : "") + '>' + escHtml(r.name) + '</option>';
+      });
+      return html;
+    }
+
+    function customerOptionsHtml(selectedId, activeOnly) {
+      let list = customers.slice();
+      if (activeOnly) list = list.filter(c => c.active !== false);
+
+      return list.map(c => {
+        return '<option value="' + c.id + '" ' + (selectedId === c.id ? "selected" : "") + '>' + escHtml(c.name) + '</option>';
+      }).join("");
+    }
+
+    function sourceOptionsHtml(selected) {
+      return SOURCES.map(s => '<option ' + (selected === s ? "selected" : "") + '>' + s + '</option>').join("");
+    }
+
+    function paymentOptionsHtml(selected) {
+      return PAYMENTS.map(p => '<option ' + (selected === p ? "selected" : "") + '>' + p + '</option>').join("");
+    }
+
+    function setupRoundAutoFill(formId, currentJobId) {
+      const form = $(formId);
+      if (!form) return;
+
+      const roundSelect = form.querySelector('[name="roundId"]');
+      const customerSelect = form.querySelector('[name="customerId"]');
+      const dueInput = form.querySelector('[name="dueDate"]');
+      const hint = form.querySelector("[data-round-hint]");
+
+      function updateFromRound() {
+        const roundId = roundSelect ? roundSelect.value : "";
+        if (!roundId) {
+          if (hint) hint.textContent = "No round selected.";
+          return;
+        }
+
+        const nextDate = getNextDateForRound(roundId, currentJobId || "");
+        const count = getFutureJobsForRound(roundId, currentJobId || "").length;
+
+        if (hint) {
+          hint.textContent = nextDate
+            ? "Next round date: " + nextDate + " (" + count + " job" + (count === 1 ? "" : "s") + ")"
+            : "No future jobs found in this round yet.";
+        }
+
+        if (nextDate && dueInput) dueInput.value = nextDate;
+      }
+
+      if (customerSelect && roundSelect) {
+        customerSelect.addEventListener("change", () => {
+          const c = getCustomerById(customerSelect.value);
+          if (c && c.roundId) roundSelect.value = c.roundId;
+          updateFromRound();
+        });
+      }
+
+      if (roundSelect) roundSelect.addEventListener("change", updateFromRound);
+      updateFromRound();
+    }
+
+    function setTabsUI() {
+      document.querySelectorAll(".tab").forEach(b => {
+        const isActive = b.dataset.tab === activeTab;
+        b.className = "tab px-3 py-2 rounded-xl text-sm font-medium border " +
+          (isActive
+            ? "bg-slate-900 text-white border-slate-900 shadow"
+            : "bg-white text-slate-900 border-slate-200");
+      });
+    }
+
+    function statusBadge(status) {
+      if (status === "Paid") return '<span class="ml-2 text-xs px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200">Paid</span>';
+      if (status === "Unpaid") return '<span class="ml-2 text-xs px-2 py-1 rounded-lg bg-amber-50 text-amber-800 border border-amber-200">Unpaid</span>';
+      return "";
+    }
+
+    function roundBadge(round) {
+      if (!round) return "";
+      const color = round.color || "#0f172a";
+      return '<span class="ml-2 text-xs px-2 py-1 rounded-lg border" style="background:' +
+        escAttr(color) + '22;color:' + escAttr(color) + ';border-color:' + escAttr(color) + '55">' +
+        escHtml(round.name) + '</span>';
+    }
+
+    function jobCard(job) {
+      const c = getCustomerById(job.customerId);
+      const r = getRoundById(job.roundId || "");
+      const status = effectiveStatus(job);
+      const address = c && c.address ? c.address : "";
+      const postcode = c && c.postcode ? c.postcode : "";
+      const notes = job.notes || (c && c.notes ? c.notes : "");
+
+      let buttons = "";
+
+      if (status === "Due") {
+        buttons += '<button data-action="done" data-id="' + job.id + '" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">Done</button>';
+        buttons += '<button data-action="paid" data-id="' + job.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Paid</button>';
+        buttons += '<button data-action="skip" data-id="' + job.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Skip</button>';
+        buttons += '<button data-action="reschedule" data-id="' + job.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Reschedule</button>';
+      }
+
+      if (status === "Unpaid") {
+        buttons += '<button data-action="paid" data-id="' + job.id + '" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">Paid</button>';
+        buttons += '<button data-action="paymentReminder" data-id="' + job.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Reminder</button>';
+      }
+
+      buttons += '<button data-action="viewJob" data-id="' + job.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">View</button>';
+      buttons += '<button data-action="editJob" data-id="' + job.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Edit</button>';
+      buttons += '<button data-action="deleteJob" data-id="' + job.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Delete</button>';
+      buttons += '<button data-action="invoice" data-id="' + job.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Invoice</button>';
+
+      return '' +
+        '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm mb-3">' +
+          '<div class="text-sm text-slate-500">' + escHtml(job.dueDate || "") + ' • ' + escHtml(status) + statusBadge(status) + roundBadge(r) + '</div>' +
+          '<div class="font-semibold">' + escHtml(c && c.name ? c.name : "Unknown customer") + '</div>' +
+          '<div class="text-sm text-slate-700 mt-1">' + escHtml(job.service || "") + ' • ' + escHtml(freqLabel(job.frequencyWeeks)) + ' • <span class="font-semibold">' + pounds(job.price) + '</span></div>' +
+          '<div class="text-sm text-slate-600 mt-2">' + escHtml(address + (postcode ? ", " + postcode : "")) + '</div>' +
+          '<a class="text-sm underline" target="_blank" href="' + mapLink(address, postcode) + '">Open in Maps</a>' +
+          (notes ? '<div class="text-sm text-slate-500 mt-2 whitespace-pre-wrap">' + escHtml(notes) + '</div>' : "") +
+          '<div class="mt-3 flex flex-wrap gap-2">' + buttons + '</div>' +
+        '</div>';
+    }
+
+    function customerCard(c) {
+      const r = getRoundById(c.roundId || "");
+      const next = getNextJobForCustomer(c.id);
+      const stats = customerStats(c.id);
+      const since = isTimestamp(c.createdAt) ? todayISO(c.createdAt.toDate()).split("-").reverse().join("/") : "—";
+      const active = c.active !== false;
+
+      return '' +
+        '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm mb-3 ' + (active ? "" : "opacity-70") + '">' +
+          '<div class="flex items-start justify-between gap-3">' +
+            '<div>' +
+              '<div class="font-semibold">' + escHtml(c.name || "Unnamed") + (active ? "" : ' <span class="ml-2 text-xs px-2 py-1 rounded-lg bg-slate-100">Disabled</span>') + roundBadge(r) + '</div>' +
+              '<div class="text-sm text-slate-600">' + escHtml((c.address || "") + (c.postcode ? " " + c.postcode : "")) + '</div>' +
+              '<div class="text-sm text-slate-600">' + escHtml(c.phone || "") + '</div>' +
+              '<div class="text-sm text-slate-500 mt-2">Next clean: ' + (next ? escHtml(next.dueDate + " • " + (next.service || "") + " • " + pounds(next.price)) : "No upcoming job") + '</div>' +
+              '<div class="text-xs text-slate-500 mt-2">' + stats.cleans + ' cleans • Paid ' + pounds(stats.paid) + ' • Unpaid ' + pounds(stats.unpaid) + ' • Since ' + since + '</div>' +
+              (c.notes ? '<div class="text-sm text-slate-500 mt-2 whitespace-pre-wrap">' + escHtml(c.notes) + '</div>' : "") +
+            '</div>' +
+            '<div class="flex flex-col gap-2">' +
+              '<button data-action="viewCustomer" data-id="' + c.id + '" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">View</button>' +
+              '<button data-action="editCustomer" data-id="' + c.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Edit</button>' +
+              (active
+                ? '<button data-action="disableCustomer" data-id="' + c.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Disable</button>'
+                : '<button data-action="enableCustomer" data-id="' + c.id + '" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">Enable</button>'
+              ) +
+            '</div>' +
+          '</div>' +
+        '</div>';
+    }
+
+    function wireJobButtons(root) {
+      const scope = root || content;
+
+      scope.querySelectorAll('[data-action="done"]').forEach(b => b.addEventListener("click", () => markDone(b.dataset.id)));
+      scope.querySelectorAll('[data-action="paid"]').forEach(b => b.addEventListener("click", () => markPaid(b.dataset.id)));
+      scope.querySelectorAll('[data-action="skip"]').forEach(b => b.addEventListener("click", () => skipJob(b.dataset.id)));
+      scope.querySelectorAll('[data-action="reschedule"]').forEach(b => b.addEventListener("click", () => openReschedule(b.dataset.id)));
+      scope.querySelectorAll('[data-action="editJob"]').forEach(b => b.addEventListener("click", () => openEditJob(b.dataset.id)));
+      scope.querySelectorAll('[data-action="deleteJob"]').forEach(b => b.addEventListener("click", () => deleteJob(b.dataset.id)));
+      scope.querySelectorAll('[data-action="viewJob"]').forEach(b => b.addEventListener("click", () => openJobDetails(b.dataset.id)));
+
+      scope.querySelectorAll('[data-action="invoice"]').forEach(b => b.addEventListener("click", () => {
+        const j = jobs.find(x => x.id === b.dataset.id);
+        copyToClipboard(messageInvoice(j, j ? getCustomerById(j.customerId) : null));
+      }));
+
+      scope.querySelectorAll('[data-action="paymentReminder"]').forEach(b => b.addEventListener("click", () => {
+        const j = jobs.find(x => x.id === b.dataset.id);
+        copyToClipboard(messagePayment(j, j ? getCustomerById(j.customerId) : null));
+      }));
+
+      scope.querySelectorAll('[data-action="cleanedText"]').forEach(b => b.addEventListener("click", () => {
+        const j = jobs.find(x => x.id === b.dataset.id);
+        copyToClipboard(messageCleaned(j, j ? getCustomerById(j.customerId) : null));
+      }));
+
+      scope.querySelectorAll('[data-action="reviewText"]').forEach(b => b.addEventListener("click", () => {
+        const j = jobs.find(x => x.id === b.dataset.id);
+        copyToClipboard(messageReview(j ? getCustomerById(j.customerId) : null));
+      }));
+    }
+
+    function wireCustomerButtons() {
+      content.querySelectorAll('[data-action="viewCustomer"]').forEach(b => b.addEventListener("click", () => openCustomerDetails(b.dataset.id)));
+      content.querySelectorAll('[data-action="editCustomer"]').forEach(b => b.addEventListener("click", () => openEditCustomer(b.dataset.id)));
+      content.querySelectorAll('[data-action="disableCustomer"]').forEach(b => b.addEventListener("click", () => setCustomerActive(b.dataset.id, false)));
+      content.querySelectorAll('[data-action="enableCustomer"]').forEach(b => b.addEventListener("click", () => setCustomerActive(b.dataset.id, true)));
+    }
+
+    function renderCustomers() {
+      let list = customers.slice();
+
+      if (customerFilter === "active") list = list.filter(c => c.active !== false);
+      if (customerFilter === "inactive") list = list.filter(c => c.active === false);
+
+      if (customerSearch.trim()) {
+        const q = customerSearch.toLowerCase();
+        list = list.filter(c =>
+          String(c.name || "").toLowerCase().includes(q) ||
+          String(c.address || "").toLowerCase().includes(q) ||
+          String(c.postcode || "").toLowerCase().includes(q)
+        );
+      }
+
+      list.sort((a,b) => {
+        if (customerSort === "name") return String(a.name || "").localeCompare(String(b.name || ""));
+        if (customerSort === "round") return String((getRoundById(a.roundId || "") || {}).name || "").localeCompare(String((getRoundById(b.roundId || "") || {}).name || ""));
+        return createdTime(b) - createdTime(a);
+      });
+
+      content.innerHTML =
+        '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm mb-4">' +
+          '<div class="grid gap-3 md:grid-cols-[1fr_180px_180px]">' +
+            '<input id="customerSearch" value="' + escAttr(customerSearch) + '" placeholder="Search name, address, postcode..." class="px-3 py-2 rounded-xl border border-slate-200" />' +
+            '<select id="customerSort" class="px-3 py-2 rounded-xl border border-slate-200">' +
+              '<option value="newest" ' + (customerSort === "newest" ? "selected" : "") + '>Newest first</option>' +
+              '<option value="name" ' + (customerSort === "name" ? "selected" : "") + '>A-Z</option>' +
+              '<option value="round" ' + (customerSort === "round" ? "selected" : "") + '>Round</option>' +
+            '</select>' +
+            '<select id="customerFilter" class="px-3 py-2 rounded-xl border border-slate-200">' +
+              '<option value="active" ' + (customerFilter === "active" ? "selected" : "") + '>Active</option>' +
+              '<option value="inactive" ' + (customerFilter === "inactive" ? "selected" : "") + '>Inactive</option>' +
+              '<option value="all" ' + (customerFilter === "all" ? "selected" : "") + '>All</option>' +
+            '</select>' +
+          '</div>' +
+        '</div>' +
+        (list.length
+          ? list.map(customerCard).join("")
+          : '<div class="p-4 rounded-2xl bg-white border border-slate-200 text-slate-600">No customers found.</div>');
+
+      $("customerSearch").addEventListener("input", e => {
+        customerSearch = e.target.value;
+        renderCustomers();
+      });
+
+      $("customerSort").addEventListener("change", e => {
+        customerSort = e.target.value;
+        renderCustomers();
+      });
+
+      $("customerFilter").addEventListener("change", e => {
+        customerFilter = e.target.value;
+        renderCustomers();
+      });
+
+      wireCustomerButtons();
+    }
+
+    function renderRounds() {
+      content.innerHTML =
+        '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm mb-4">' +
+          '<div class="font-semibold text-lg mb-3">Add Round</div>' +
+          '<form id="fRound" class="grid gap-3 md:grid-cols-[1fr_140px_120px] items-end">' +
+            '<div class="grid gap-1">' +
+              '<label class="text-sm font-medium">Round name</label>' +
+              '<input name="name" class="px-3 py-2 rounded-xl border border-slate-200" required />' +
+            '</div>' +
+            '<div class="grid gap-1">' +
+              '<label class="text-sm font-medium">Colour</label>' +
+              '<input name="color" type="color" value="#0f172a" class="h-11 rounded-xl border border-slate-200 bg-white" />' +
+            '</div>' +
+            '<button class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">Save</button>' +
+          '</form>' +
+        '</div>' +
+        '<div class="grid gap-3">' +
+          (rounds.length ? rounds.map(r => {
+            const activeJobs = jobs.filter(j => j.roundId === r.id && effectiveStatus(j) !== "Paid");
+            const value = activeJobs.reduce((sum,j) => sum + Number(j.price || 0), 0);
+
+            return '' +
+              '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">' +
+                '<div class="flex items-center justify-between gap-3">' +
+                  '<div>' +
+                    '<div class="font-semibold flex items-center gap-2">' +
+                      '<span class="inline-block w-4 h-4 rounded-full border border-slate-300" style="background:' + escAttr(r.color || "#0f172a") + '"></span>' +
+                      escHtml(r.name || "") +
+                    '</div>' +
+                    '<div class="text-sm text-slate-500">' + activeJobs.length + ' active jobs • ' + pounds(value) + '</div>' +
+                  '</div>' +
+                  '<button data-action="deleteRound" data-id="' + r.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Delete</button>' +
+                '</div>' +
+              '</div>';
+          }).join("") : '<div class="p-4 rounded-2xl bg-white border border-slate-200 text-slate-600">No rounds yet.</div>') +
+        '</div>';
+
+      $("fRound").addEventListener("submit", async e => {
+        e.preventDefault();
+        await createRound(Object.fromEntries(new FormData(e.target).entries()));
+        e.target.reset();
+      });
+
+      content.querySelectorAll('[data-action="deleteRound"]').forEach(b => b.addEventListener("click", () => deleteRound(b.dataset.id)));
+    }
+
+    function renderJobs(list) {
+      if (!list.length) {
+        content.innerHTML = '<div class="p-4 rounded-2xl bg-white border border-slate-200 text-slate-600">Nothing here.</div>';
+        return;
+      }
+      content.innerHTML = list.map(jobCard).join("");
+      wireJobButtons();
+    }
+
+    function renderStats() {
+      const ms = monthStartDate().getTime();
+      const me = monthEndDate().getTime();
+
+      let paidMonth = 0;
+      let dueMonth = 0;
+      let unpaidTotal = 0;
+      const activeCustomers = customers.filter(c => c.active !== false).length;
+
+      jobs.forEach(j => {
+        const st = effectiveStatus(j);
+
+        if (st === "Unpaid") unpaidTotal += Number(j.price || 0);
+
+        if (j.dueDate) {
+          const d = new Date(j.dueDate + "T00:00:00").getTime();
+          if (d >= ms && d <= me && st === "Due") dueMonth += Number(j.price || 0);
+        }
+
+        if (st === "Paid" && isTimestamp(j.paidAt)) {
+          const t = j.paidAt.toDate().getTime();
+          if (t >= ms && t <= me) paidMonth += Number(j.price || 0);
+        }
+      });
+
+      content.innerHTML =
+        '<div class="grid md:grid-cols-4 gap-3">' +
+          '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm"><div class="text-sm text-slate-500">Paid this month</div><div class="text-2xl font-bold">' + pounds(paidMonth) + '</div></div>' +
+          '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm"><div class="text-sm text-slate-500">Due this month</div><div class="text-2xl font-bold">' + pounds(dueMonth) + '</div></div>' +
+          '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm"><div class="text-sm text-slate-500">Unpaid total</div><div class="text-2xl font-bold">' + pounds(unpaidTotal) + '</div></div>' +
+          '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm"><div class="text-sm text-slate-500">Active customers</div><div class="text-2xl font-bold">' + activeCustomers + '</div></div>' +
+        '</div>';
+    }
+
+    function renderCalendar() {
+      const offset = calendarStartOffset(calYear, calMonth);
+      const dim = daysInCalendarMonth(calYear, calMonth);
+      const cells = [];
+
+      for (let i = 0; i < 42; i++) {
+        const dayNumber = i - offset + 1;
+
+        if (dayNumber < 1 || dayNumber > dim) {
+          cells.push('<div class="min-h-[96px] bg-white/40 border border-slate-200 rounded-2xl p-2"></div>');
+          continue;
+        }
+
+        const iso = isoFromYMD(calYear, calMonth, dayNumber);
+        const list = jobsOnDate(iso);
+
+        const items = list.slice(0, 3).map(j => {
+          const c = getCustomerById(j.customerId);
+          return '<div class="text-xs truncate"><span class="font-medium">' + escHtml(c && c.address ? c.address : "No address") + '</span><span class="text-slate-500"> • ' + pounds(j.price) + '</span></div>';
+        }).join("");
+
+        cells.push(
+          '<button data-cal-date="' + iso + '" class="text-left min-h-[96px] bg-white border border-slate-200 rounded-2xl p-2 hover:border-slate-400">' +
+            '<div class="flex items-center justify-between">' +
+              '<div class="text-sm font-semibold">' + dayNumber + '</div>' +
+              (list.length ? '<div class="text-[11px] px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200">' + list.length + '</div>' : "") +
+            '</div>' +
+            '<div class="mt-1 space-y-1">' +
+              (items || '<div class="text-xs text-slate-400">No jobs</div>') +
+              (list.length > 3 ? '<div class="text-[11px] text-slate-500 mt-1">+' + (list.length - 3) + ' more</div>' : "") +
+            '</div>' +
+          '</button>'
+        );
+      }
+
+      content.innerHTML =
+        '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">' +
+          '<div class="flex items-center justify-between gap-3">' +
+            '<div class="font-semibold text-lg">' + monthName(calMonth) + ' ' + calYear + '</div>' +
+            '<div class="flex gap-2">' +
+              '<button id="calPrev" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">◀</button>' +
+              '<button id="calToday" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Today</button>' +
+              '<button id="calNext" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">▶</button>' +
+            '</div>' +
+          '</div>' +
+          '<div class="mt-3 grid grid-cols-7 gap-2 text-xs text-slate-500">' +
+            '<div class="text-center">Mon</div><div class="text-center">Tue</div><div class="text-center">Wed</div><div class="text-center">Thu</div><div class="text-center">Fri</div><div class="text-center">Sat</div><div class="text-center">Sun</div>' +
+          '</div>' +
+          '<div class="mt-2 grid grid-cols-7 gap-2">' + cells.join("") + '</div>' +
+        '</div>';
+
+      $("calPrev").addEventListener("click", () => {
+        calMonth--;
+        if (calMonth < 0) { calMonth = 11; calYear--; }
+        renderCalendar();
+      });
+
+      $("calNext").addEventListener("click", () => {
+        calMonth++;
+        if (calMonth > 11) { calMonth = 0; calYear++; }
+        renderCalendar();
+      });
+
+      $("calToday").addEventListener("click", () => {
+        const d = new Date();
+        calYear = d.getFullYear();
+        calMonth = d.getMonth();
+        renderCalendar();
+      });
+
+      content.querySelectorAll("[data-cal-date]").forEach(b => b.addEventListener("click", () => openCalendarDay(b.dataset.calDate)));
+    }
+
+    function openCalendarDay(iso) {
+      const list = sortJobsByDue(jobsOnDate(iso).slice());
+
+      const rows = list.length ? list.map(j => {
+        const c = getCustomerById(j.customerId);
+        return '<button data-day-job="' + j.id + '" class="w-full text-left border border-slate-200 rounded-xl p-3 hover:border-slate-400">' +
+          '<div class="font-semibold">' + escHtml(c && c.address ? c.address : "Unknown address") + ' • ' + pounds(j.price) + '</div>' +
+          '<div class="text-sm text-slate-600">' + escHtml(j.service || "") + ' • ' + escHtml(effectiveStatus(j)) + '</div>' +
+        '</button>';
+      }).join("") : '<div class="text-sm text-slate-500">No jobs on this date.</div>';
+
+      openModal("Jobs on " + iso,
+        '<div class="grid gap-3">' +
+          '<button id="btnAddJobOnDate" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">+ Add job on ' + iso + '</button>' +
+          rows +
+        '</div>'
+      );
+
+      $("btnAddJobOnDate").addEventListener("click", () => {
+        closeModal();
+        openAddJob(iso);
+      });
+
+      document.querySelectorAll("[data-day-job]").forEach(b => b.addEventListener("click", () => {
+        closeModal();
+        openJobDetails(b.dataset.dayJob);
+      }));
+    }
+
+    function render() {
+      setTabsUI();
+      renderSubhead();
+
+      if (activeTab === "customers") { renderCustomers(); return; }
+      if (activeTab === "rounds") { renderRounds(); return; }
+      if (activeTab === "calendar") { renderCalendar(); return; }
+      if (activeTab === "stats") { renderStats(); return; }
+
+      const today = todayISO();
+      const weekEnd = addDaysISO(today, 6);
+      let list = jobs.slice();
+
+      if (activeTab !== "all") {
+        list = list.filter(j => effectiveStatus(j) !== "Paid");
+      }
+
+      if (activeTab === "today") list = list.filter(j => effectiveStatus(j) === "Due" && j.dueDate === today);
+      if (activeTab === "week") list = list.filter(j => effectiveStatus(j) === "Due" && j.dueDate >= today && j.dueDate <= weekEnd);
+      if (activeTab === "overdue") list = list.filter(j => effectiveStatus(j) === "Due" && j.dueDate < today);
+      if (activeTab === "unpaid") list = list.filter(j => effectiveStatus(j) === "Unpaid");
+
+      renderJobs(sortJobsByDue(list));
+    }
+
+    function openAddCustomer() {
+      openModal("Add Customer",
+        '<form id="fCustomer" class="grid gap-3">' +
+          '<div class="grid gap-1"><label class="text-sm font-medium">Name</label><input name="name" class="px-3 py-2 rounded-xl border border-slate-200" required /></div>' +
+          '<div class="grid grid-cols-2 gap-3">' +
+            '<div class="grid gap-1"><label class="text-sm font-medium">Phone</label><input name="phone" class="px-3 py-2 rounded-xl border border-slate-200" /></div>' +
+            '<div class="grid gap-1"><label class="text-sm font-medium">Email</label><input name="email" type="email" class="px-3 py-2 rounded-xl border border-slate-200" /></div>' +
+          '</div>' +
+          '<div class="grid gap-1"><label class="text-sm font-medium">Address</label><input name="address" class="px-3 py-2 rounded-xl border border-slate-200" /></div>' +
+          '<div class="grid grid-cols-2 gap-3">' +
+            '<div class="grid gap-1"><label class="text-sm font-medium">Postcode</label><input name="postcode" class="px-3 py-2 rounded-xl border border-slate-200" /></div>' +
+            '<div class="grid gap-1"><label class="text-sm font-medium">Payment</label><select name="preferredPayment" class="px-3 py-2 rounded-xl border border-slate-200">' + paymentOptionsHtml("Cash") + '</select></div>' +
+          '</div>' +
+          '<div class="grid grid-cols-2 gap-3">' +
+            '<div class="grid gap-1"><label class="text-sm font-medium">Source</label><select name="source" class="px-3 py-2 rounded-xl border border-slate-200">' + sourceOptionsHtml("") + '</select></div>' +
+            '<div class="grid gap-1"><label class="text-sm font-medium">Default round</label><select name="roundId" class="px-3 py-2 rounded-xl border border-slate-200">' + roundOptionsHtml("") + '</select></div>' +
+          '</div>' +
+          '<div class="grid gap-1"><label class="text-sm font-medium">Notes</label><textarea name="notes" rows="3" class="px-3 py-2 rounded-xl border border-slate-200"></textarea></div>' +
+          '<button class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">Save</button>' +
+        '</form>'
+      );
+
+      $("fCustomer").addEventListener("submit", async e => {
+        e.preventDefault();
+        await createCustomer(Object.fromEntries(new FormData(e.target).entries()));
+        closeModal();
+      });
+    }
+
+    function openEditCustomer(customerId) {
+      const c = getCustomerById(customerId);
+      if (!c) return;
+
+      openModal("Edit Customer",
+        '<form id="fEditCustomer" class="grid gap-3">' +
+          '<div class="grid gap-1"><label class="text-sm font-medium">Name</label><input name="name" value="' + escAttr(c.name || "") + '" class="px-3 py-2 rounded-xl border border-slate-200" required /></div>' +
+          '<div class="grid grid-cols-2 gap-3">' +
+            '<div class="grid gap-1"><label class="text-sm font-medium">Phone</label><input name="phone" value="' + escAttr(c.phone || "") + '" class="px-3 py-2 rounded-xl border border-slate-200" /></div>' +
+            '<div class="grid gap-1"><label class="text-sm font-medium">Email</label><input name="email" type="email" value="' + escAttr(c.email || "") + '" class="px-3 py-2 rounded-xl border border-slate-200" /></div>' +
+          '</div>' +
+          '<div class="grid gap-1"><label class="text-sm font-medium">Address</label><input name="address" value="' + escAttr(c.address || "") + '" class="px-3 py-2 rounded-xl border border-slate-200" /></div>' +
+          '<div class="grid grid-cols-2 gap-3">' +
+            '<div class="grid gap-1"><label class="text-sm font-medium">Postcode</label><input name="postcode" value="' + escAttr(c.postcode || "") + '" class="px-3 py-2 rounded-xl border border-slate-200" /></div>' +
+            '<div class="grid gap-1"><label class="text-sm font-medium">Payment</label><select name="preferredPayment" class="px-3 py-2 rounded-xl border border-slate-200">' + paymentOptionsHtml(c.preferredPayment || "Cash") + '</select></div>' +
+          '</div>' +
+          '<div class="grid grid-cols-2 gap-3">' +
+            '<div class="grid gap-1"><label class="text-sm font-medium">Source</label><select name="source" class="px-3 py-2 rounded-xl border border-slate-200">' + sourceOptionsHtml(c.source || "") + '</select></div>' +
+            '<div class="grid gap-1"><label class="text-sm font-medium">Default round</label><select name="roundId" class="px-3 py-2 rounded-xl border border-slate-200">' + roundOptionsHtml(c.roundId || "") + '</select></div>' +
+          '</div>' +
+          '<div class="grid gap-1"><label class="text-sm font-medium">Notes</label><textarea name="notes" rows="3" class="px-3 py-2 rounded-xl border border-slate-200">' + escHtml(c.notes || "") + '</textarea></div>' +
+          '<button class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">Save</button>' +
+        '</form>'
+      );
+
+      $("fEditCustomer").addEventListener("submit", async e => {
+        e.preventDefault();
+        await updateCustomer(customerId, Object.fromEntries(new FormData(e.target).entries()));
+        closeModal();
+      });
+    }
+
+    function openAddJob(prefillDate, prefillCustomerId) {
+      const activeCustomers = customers.filter(c => c.active !== false);
+
+      if (!activeCustomers.length) {
+        setNotice("Add a customer first.");
+        activeTab = "customers";
+        render();
+        return;
+      }
+
+      const selectedCustomerId = prefillCustomerId || activeCustomers[0].id;
+      const selectedCustomer = getCustomerById(selectedCustomerId);
+      const defaultRoundId = selectedCustomer && selectedCustomer.roundId ? selectedCustomer.roundId : "";
+      const dateValue = prefillDate || getNextDateForRound(defaultRoundId, "") || todayISO();
+
+      openModal("Add Job",
+        '<form id="fJob" class="grid gap-3">' +
+          '<div class="grid gap-1"><label class="text-sm font-medium">Customer</label><select name="customerId" class="px-3 py-2 rounded-xl border border-slate-200" required>' + customerOptionsHtml(selectedCustomerId, true) + '</select></div>' +
+          '<div class="grid grid-cols-2 gap-3">' +
+            '<div class="grid gap-1"><label class="text-sm font-medium">Service</label><select name="service" class="px-3 py-2 rounded-xl border border-slate-200">' + SERVICES.map(s => '<option>' + escHtml(s) + '</option>').join("") + '</select></div>' +
+            '<div class="grid gap-1"><label class="text-sm font-medium">Frequency</label><select name="frequencyWeeks" class="px-3 py-2 rounded-xl border border-slate-200">' + FREQS.map(f => '<option value="' + f + '">' + freqLabel(f) + '</option>').join("") + '</select></div>' +
+          '</div>' +
+          '<div class="grid gap-1"><label class="text-sm font-medium">Round</label><select name="roundId" class="px-3 py-2 rounded-xl border border-slate-200">' + roundOptionsHtml(defaultRoundId) + '</select><div data-round-hint class="text-xs text-slate-500">No round selected.</div></div>' +
+          '<div class="grid grid-cols-2 gap-3">' +
+            '<div class="grid gap-1"><label class="text-sm font-medium">Due date</label><input name="dueDate" type="date" value="' + dateValue + '" class="px-3 py-2 rounded-xl border border-slate-200" /></div>' +
+            '<div class="grid gap-1"><label class="text-sm font-medium">Price (£)</label><input name="price" type="number" step="0.01" class="px-3 py-2 rounded-xl border border-slate-200" /></div>' +
+          '</div>' +
+          '<div class="grid gap-1"><label class="text-sm font-medium">Payment method</label><select name="paymentMethod" class="px-3 py-2 rounded-xl border border-slate-200">' + paymentOptionsHtml("Cash") + '</select></div>' +
+          '<div class="grid gap-1"><label class="text-sm font-medium">Notes</label><textarea name="notes" rows="3" class="px-3 py-2 rounded-xl border border-slate-200"></textarea></div>' +
+          '<button class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">Save</button>' +
+        '</form>'
+      );
+
+      setupRoundAutoFill("fJob", "");
+
+      $("fJob").addEventListener("submit", async e => {
+        e.preventDefault();
+        await createJob(Object.fromEntries(new FormData(e.target).entries()));
+        closeModal();
+      });
+    }
+
+    function openEditJob(jobId) {
+      const j = jobs.find(x => x.id === jobId);
+      if (!j) return;
+
+      openModal("Edit Job",
+        '<form id="fEditJob" class="grid gap-3">' +
+          '<div class="grid gap-1"><label class="text-sm font-medium">Customer</label><select name="customerId" class="px-3 py-2 rounded-xl border border-slate-200" required>' + customerOptionsHtml(j.customerId, false) + '</select></div>' +
+          '<div class="grid grid-cols-2 gap-3">' +
+            '<div class="grid gap-1"><label class="text-sm font-medium">Service</label><select name="service" class="px-3 py-2 rounded-xl border border-slate-200">' + SERVICES.map(s => '<option ' + (j.service === s ? "selected" : "") + '>' + escHtml(s) + '</option>').join("") + '</select></div>' +
+            '<div class="grid gap-1"><label class="text-sm font-medium">Frequency</label><select name="frequencyWeeks" class="px-3 py-2 rounded-xl border border-slate-200">' + FREQS.map(f => '<option value="' + f + '" ' + (Number(j.frequencyWeeks) === Number(f) ? "selected" : "") + '>' + freqLabel(f) + '</option>').join("") + '</select></div>' +
+          '</div>' +
+          '<div class="grid gap-1"><label class="text-sm font-medium">Round</label><select name="roundId" class="px-3 py-2 rounded-xl border border-slate-200">' + roundOptionsHtml(j.roundId || "") + '</select><div data-round-hint class="text-xs text-slate-500">No round selected.</div></div>' +
+          '<div class="grid grid-cols-2 gap-3">' +
+            '<div class="grid gap-1"><label class="text-sm font-medium">Due date</label><input name="dueDate" type="date" value="' + escAttr(j.dueDate || todayISO()) + '" class="px-3 py-2 rounded-xl border border-slate-200" /></div>' +
+            '<div class="grid gap-1"><label class="text-sm font-medium">Price (£)</label><input name="price" type="number" step="0.01" value="' + Number(j.price || 0) + '" class="px-3 py-2 rounded-xl border border-slate-200" /></div>' +
+          '</div>' +
+          '<div class="grid gap-1"><label class="text-sm font-medium">Payment method</label><select name="paymentMethod" class="px-3 py-2 rounded-xl border border-slate-200">' + paymentOptionsHtml(j.paymentMethod || "Cash") + '</select></div>' +
+          '<div class="grid gap-1"><label class="text-sm font-medium">Notes</label><textarea name="notes" rows="3" class="px-3 py-2 rounded-xl border border-slate-200">' + escHtml(j.notes || "") + '</textarea></div>' +
+          '<button class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">Save</button>' +
+        '</form>'
+      );
+
+      setupRoundAutoFill("fEditJob", jobId);
+
+      $("fEditJob").addEventListener("submit", async e => {
+        e.preventDefault();
+        await updateJob(jobId, Object.fromEntries(new FormData(e.target).entries()));
+        closeModal();
+      });
+    }
+
+    function openReschedule(jobId) {
+      const j = jobs.find(x => x.id === jobId);
+      if (!j) return;
+
+      openModal("Reschedule Job",
+        '<form id="fReschedule" class="grid gap-3">' +
+          '<div class="text-sm text-slate-600">Current date: ' + escHtml(j.dueDate || "") + '</div>' +
+          '<input name="dueDate" type="date" value="' + escAttr(j.dueDate || todayISO()) + '" class="px-3 py-2 rounded-xl border border-slate-200" />' +
+          '<button class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">Save</button>' +
+        '</form>'
+      );
+
+      $("fReschedule").addEventListener("submit", async e => {
+        e.preventDefault();
+        await updateDoc(doc(db, "jobs", jobId), { dueDate: new FormData(e.target).get("dueDate") });
+        await loadJobs();
+        closeModal();
+        render();
+      });
+    }
+
+    function openCustomerDetails(customerId) {
+      const c = getCustomerById(customerId);
+      if (!c) return;
+
+      const stats = customerStats(c.id);
+      const next = getNextJobForCustomer(c.id);
+      const since = isTimestamp(c.createdAt) ? todayISO(c.createdAt.toDate()).split("-").reverse().join("/") : "—";
+
+      openModal(c.name || "Customer",
+        '<div class="grid gap-4">' +
+          '<div class="grid gap-1 text-sm">' +
+            '<div><b>Address:</b> ' + escHtml((c.address || "") + (c.postcode ? " " + c.postcode : "")) + '</div>' +
+            '<div><b>Phone:</b> ' + escHtml(c.phone || "") + '</div>' +
+            '<div><b>Email:</b> ' + escHtml(c.email || "") + '</div>' +
+            '<div><b>Payment:</b> ' + escHtml(c.preferredPayment || "Cash") + '</div>' +
+            '<div><b>Source:</b> ' + escHtml(c.source || "—") + '</div>' +
+            '<div><b>Customer since:</b> ' + since + '</div>' +
+          '</div>' +
+          '<div class="grid grid-cols-3 gap-2">' +
+            '<div class="p-3 rounded-xl bg-slate-50 border border-slate-200"><div class="text-xs text-slate-500">Cleans</div><div class="font-bold">' + stats.cleans + '</div></div>' +
+            '<div class="p-3 rounded-xl bg-slate-50 border border-slate-200"><div class="text-xs text-slate-500">Paid</div><div class="font-bold">' + pounds(stats.paid) + '</div></div>' +
+            '<div class="p-3 rounded-xl bg-slate-50 border border-slate-200"><div class="text-xs text-slate-500">Unpaid</div><div class="font-bold">' + pounds(stats.unpaid) + '</div></div>' +
+          '</div>' +
+          '<div class="text-sm"><b>Next clean:</b> ' + (next ? escHtml(next.dueDate + " • " + (next.service || "") + " • " + pounds(next.price)) : "No upcoming clean") + '</div>' +
+          (c.notes ? '<div class="text-sm"><b>Notes:</b><div class="whitespace-pre-wrap text-slate-600">' + escHtml(c.notes) + '</div></div>' : "") +
+          '<div class="flex flex-wrap gap-2">' +
+            '<button id="detailEditCustomer" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">Edit</button>' +
+            '<button id="detailAddJob" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Add job</button>' +
+          '</div>' +
+        '</div>'
+      );
+
+      $("detailEditCustomer").addEventListener("click", () => {
+        closeModal();
+        openEditCustomer(customerId);
+      });
+
+      $("detailAddJob").addEventListener("click", () => {
+        closeModal();
+        openAddJob("", customerId);
+      });
+    }
+
+    function openJobDetails(jobId) {
+      const j = jobs.find(x => x.id === jobId);
+      if (!j) return;
+
+      const c = getCustomerById(j.customerId);
+      const status = effectiveStatus(j);
+
+      openModal("Job Details",
+        '<div class="grid gap-4">' +
+          '<div class="grid gap-1 text-sm">' +
+            '<div><b>Customer:</b> ' + escHtml(c && c.name ? c.name : "Unknown") + '</div>' +
+            '<div><b>Address:</b> ' + escHtml(c ? ((c.address || "") + (c.postcode ? " " + c.postcode : "")) : "") + '</div>' +
+            '<div><b>Phone:</b> ' + escHtml(c && c.phone ? c.phone : "") + '</div>' +
+            '<div><b>Date:</b> ' + escHtml(j.dueDate || "") + '</div>' +
+            '<div><b>Service:</b> ' + escHtml(j.service || "") + '</div>' +
+            '<div><b>Frequency:</b> ' + escHtml(freqLabel(j.frequencyWeeks)) + '</div>' +
+            '<div><b>Price:</b> ' + pounds(j.price) + '</div>' +
+            '<div><b>Status:</b> ' + escHtml(status) + '</div>' +
+            '<div><b>Payment:</b> ' + escHtml(j.paymentMethod || "") + '</div>' +
+            (j.notes ? '<div><b>Job notes:</b><div class="whitespace-pre-wrap text-slate-600">' + escHtml(j.notes) + '</div></div>' : "") +
+            (c && c.notes ? '<div><b>Customer notes:</b><div class="whitespace-pre-wrap text-slate-600">' + escHtml(c.notes) + '</div></div>' : "") +
+          '</div>' +
+          '<div class="flex flex-wrap gap-2">' +
+            (status === "Due" ? '<button data-action="done" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">Done</button>' : "") +
+            (status !== "Paid" ? '<button data-action="paid" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Paid</button>' : "") +
+            '<button data-action="cleanedText" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Cleaned text</button>' +
+            '<button data-action="paymentReminder" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Reminder</button>' +
+            '<button data-action="reviewText" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Review text</button>' +
+            '<button data-action="editJob" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Edit</button>' +
+          '</div>' +
+        '</div>'
+      );
+
+      wireJobButtons($("modalBody"));
+    }
+
+    function downloadCSV(filename, rows) {
+      if (!rows.length) {
+        alert("Nothing to export.");
+        return;
+      }
+
+      const headers = Object.keys(rows[0]);
+      const csv = [headers.join(",")].concat(rows.map(row => {
+        return headers.map(header => {
+          const value = row[header] === undefined || row[header] === null ? "" : String(row[header]);
+          return '"' + value.replace(/"/g, '""') + '"';
+        }).join(",");
+      })).join("\n");
+
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = filename;
+      link.click();
+    }
+
+    $("btnExportCustomers").addEventListener("click", () => {
+      const rows = customers.map(c => {
+        const r = getRoundById(c.roundId || "");
+        const s = customerStats(c.id);
+        return {
+          name: c.name || "",
+          phone: c.phone || "",
+          email: c.email || "",
+          address: c.address || "",
+          postcode: c.postcode || "",
+          payment: c.preferredPayment || "",
+          source: c.source || "",
+          round: r ? r.name : "",
+          notes: c.notes || "",
+          active: c.active !== false ? "active" : "disabled",
+          cleans: s.cleans,
+          paidTotal: s.paid,
+          unpaidTotal: s.unpaid
+        };
+      });
+
+      downloadCSV("roundmate-customers.csv", rows);
+    });
+
+    $("btnExportJobs").addEventListener("click", () => {
+      const rows = jobs.map(j => {
+        const c = getCustomerById(j.customerId);
+        const r = getRoundById(j.roundId || "");
+
+        return {
+          customerName: c && c.name ? c.name : "",
+          address: c && c.address ? c.address : "",
+          postcode: c && c.postcode ? c.postcode : "",
+          service: j.service || "",
+          dueDate: j.dueDate || "",
+          frequency: freqLabel(j.frequencyWeeks),
+          price: j.price || "",
+          status: effectiveStatus(j),
+          paid: j.paid ? "yes" : "no",
+          paymentMethod: j.paymentMethod || "",
+          round: r && r.name ? r.name : "",
+          notes: j.notes || ""
+        };
+      });
+
+      downloadCSV("roundmate-jobs.csv", rows);
+    });
+
+    document.querySelectorAll(".tab").forEach(b => b.addEventListener("click", () => {
+      activeTab = b.dataset.tab;
+      render();
+    }));
+
+    $("btnAddCustomer").addEventListener("click", openAddCustomer);
+    $("btnAddJob").addEventListener("click", () => openAddJob());
+
+    onAuthStateChanged(auth, async user => {
+      if (!user) return;
+      uid = user.uid;
+      await refreshAll();
+    });
+
+    async function boot() {
+      subhead.textContent = "Signing in…";
+      try {
+        await signInAnonymously(auth);
+      } catch (e) {
+        subhead.textContent = "Auth error. Enable Anonymous Auth in Firebase.";
+        console.error(e);
+      }
+    }
+
     boot();
   </script>
 </body>
