@@ -1,3 +1,5 @@
+
+
 <!doctype html>
 <html lang="en">
 <head>
@@ -12,19 +14,18 @@
     <div class="flex items-start justify-between gap-3">
       <div>
         <h1 class="text-2xl font-bold tracking-tight">RoundMate</h1>
-        <p id="subhead" class="text-sm text-slate-500">Loading…</p>
+        <p id="subhead" class="inline-flex mt-1 px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-xs font-medium text-emerald-800">Loading…</p>
       </div>
 
       <div class="flex flex-wrap justify-end gap-2">
         <button id="btnAddCustomer" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">+ Customer</button>
         <button id="btnAddJob" class="px-3 py-2 rounded-xl bg-white text-slate-900 text-sm font-medium shadow border border-slate-200">+ Job</button>
-        <button id="btnExportCustomers" class="px-3 py-2 rounded-xl bg-white text-slate-900 text-sm font-medium shadow border border-slate-200">Export Customers</button>
-        <button id="btnExportJobs" class="px-3 py-2 rounded-xl bg-white text-slate-900 text-sm font-medium shadow border border-slate-200">Export Jobs</button>
       </div>
     </div>
 
     <div class="mt-4 flex flex-wrap gap-2">
       <button data-tab="today" class="tab px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">Today</button>
+      <button data-tab="route" class="tab px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">Route</button>
       <button data-tab="week" class="tab px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">Week</button>
       <button data-tab="overdue" class="tab px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">Overdue</button>
       <button data-tab="unpaid" class="tab px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">Unpaid</button>
@@ -32,6 +33,7 @@
       <button data-tab="customers" class="tab px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">Customers</button>
       <button data-tab="rounds" class="tab px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">Rounds</button>
       <button data-tab="stats" class="tab px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">Stats</button>
+      <button data-tab="settings" class="tab px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">Settings</button>
       <button data-tab="all" class="tab px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">All</button>
     </div>
 
@@ -68,7 +70,7 @@
 
     const SERVICES = ["Window Clean", "Conservatory", "Gutter Clean", "Fascia + Gutters", "Fascia Only"];
     const FREQS = [0, 4, 8, 12, 52];
-    const PAYMENTS = ["Cash", "Bank Transfer", "Card", "GoCardless"];
+    const PAYMENTS = ["Cash", "Bank transfer", "Stripe", "GoCardless"];
     const SOURCES = ["Leaflet", "Facebook", "Google", "Nextdoor", "Referral", "Other"];
 
     const $ = (id) => document.getElementById(id);
@@ -85,11 +87,16 @@
     let customers = [];
     let jobs = [];
     let rounds = [];
+    let companySettings = { stripePaymentLink: "", stripePaymentLinks: {}, goCardlessPaymentLink: "", bacsDetails: "", reviewLink: "" };
+    let companySettingsId = "";
     let customerSort = "newest";
     let customerFilter = "active";
     let customerSearch = "";
     let calYear = new Date().getFullYear();
     let calMonth = new Date().getMonth();
+    let activeCalendarDayIso = "";
+    let routeDate = todayISO();
+    const pendingActions = new Set();
 
     function escHtml(value) {
       return String(value || "").replace(/[&<>"']/g, function(c) {
@@ -110,6 +117,13 @@
       return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
     }
 
+    function formatDate(iso) {
+      if (!iso) return "";
+      const parts = String(iso).split("-");
+      if (parts.length !== 3) return iso;
+      return parts[2] + "/" + parts[1] + "/" + parts[0];
+    }
+
     function addDaysISO(iso, days) {
       const d = new Date(iso + "T00:00:00");
       d.setDate(d.getDate() + days);
@@ -126,6 +140,37 @@
 
     function pounds(n) {
       return "£" + Number(n || 0).toFixed(2);
+    }
+
+    function priceKey(value) {
+      const n = Number(value || 0);
+      if (!Number.isFinite(n)) return "";
+      return String(Math.round(n * 100) / 100).replace(/\.00$/, "");
+    }
+
+    function normalizePaymentMethod(method) {
+      if (method === "Bank Transfer") return "Bank transfer";
+      if (method === "Card") return "Stripe";
+      return method || "Cash";
+    }
+
+    function paymentBadge(method) {
+      const payment = normalizePaymentMethod(method);
+      let classes = "bg-slate-100 text-slate-700 border-slate-200";
+      if (payment === "Stripe") classes = "bg-indigo-50 text-indigo-700 border-indigo-200";
+      if (payment === "GoCardless") classes = "bg-sky-50 text-sky-700 border-sky-200";
+      if (payment === "Cash") classes = "bg-emerald-50 text-emerald-700 border-emerald-200";
+      if (payment === "Bank transfer") classes = "bg-amber-50 text-amber-800 border-amber-200";
+      return '<span class="inline-flex items-center px-2 py-1 rounded-lg border text-xs font-semibold ' + classes + '">' + escHtml(payment) + '</span>';
+    }
+
+    function paymentActionText(job) {
+      const method = normalizePaymentMethod(job && job.paymentMethod);
+      if (method === "Stripe") return "Send the Stripe payment link.";
+      if (method === "GoCardless") return "Request/collect this by GoCardless.";
+      if (method === "Bank transfer") return "Send BACS details or post a slip.";
+      if (method === "Cash") return "Ask for cash payment.";
+      return "Check payment method.";
     }
 
     function freqLabel(f) {
@@ -209,6 +254,7 @@
     function closeModal() {
       $("modalWrap").classList.add("hidden");
       $("modalBody").innerHTML = "";
+      activeCalendarDayIso = "";
     }
 
     $("btnCloseModal").addEventListener("click", closeModal);
@@ -224,8 +270,27 @@
       return rounds.find(r => r.id === id) || null;
     }
 
+    function routeOrderValue(job) {
+      const n = Number(job && job.routeOrder);
+      return Number.isFinite(n) ? n : 999999;
+    }
+
     function sortJobsByDue(list) {
-      return list.sort((a,b) => String(a.dueDate || "").localeCompare(String(b.dueDate || "")));
+      return list.sort((a,b) => {
+        const byDate = String(a.dueDate || "").localeCompare(String(b.dueDate || ""));
+        if (byDate !== 0) return byDate;
+        const byRoute = routeOrderValue(a) - routeOrderValue(b);
+        if (byRoute !== 0) return byRoute;
+        return createdTime(a) - createdTime(b);
+      });
+    }
+
+    function sortJobsForDate(list) {
+      return list.sort((a,b) => {
+        const byRoute = routeOrderValue(a) - routeOrderValue(b);
+        if (byRoute !== 0) return byRoute;
+        return createdTime(a) - createdTime(b);
+      });
     }
 
     function customerStats(customerId) {
@@ -269,10 +334,10 @@
     }
 
     function jobsOnDate(iso) {
-      return jobs.filter(j => {
+      return sortJobsForDate(jobs.filter(j => {
         const st = effectiveStatus(j);
         return j.dueDate === iso && (st === "Due" || st === "Unpaid");
-      });
+      }));
     }
 
     function paidThisWeekTotal() {
@@ -287,7 +352,7 @@
     }
 
     function renderSubhead() {
-      subhead.textContent = "Ready. Synced via Firebase. • Paid this week: " + pounds(paidThisWeekTotal());
+      subhead.textContent = "Synced • Paid this week " + pounds(paidThisWeekTotal());
     }
 
     async function loadCustomers() {
@@ -311,9 +376,51 @@
       rounds.sort((a,b) => String(a.name || "").localeCompare(String(b.name || "")));
     }
 
+    async function loadCompanySettings() {
+      companySettings = { stripePaymentLink: "", stripePaymentLinks: {}, goCardlessPaymentLink: "", bacsDetails: "", reviewLink: "" };
+      companySettingsId = "";
+      const snap = await getDocs(query(collection(db, "companySettings"), where("ownerUid", "==", uid)));
+      snap.forEach(d => {
+        if (!companySettingsId) {
+          companySettingsId = d.id;
+          companySettings = { ...companySettings, ...d.data() };
+        }
+      });
+    }
+
     async function refreshAll() {
-      await Promise.all([loadCustomers(), loadJobs(), loadRounds()]);
+      await Promise.all([loadCustomers(), loadJobs(), loadRounds(), loadCompanySettings()]);
       renderSubhead();
+      render();
+    }
+
+    async function saveCompanySettings(data) {
+      const stripePaymentLinks = {};
+      for (let amount = 10; amount <= 40; amount++) {
+        const link = data["stripe_" + amount];
+        if (link) stripePaymentLinks[String(amount)] = link;
+      }
+
+      const payload = {
+        ownerUid: uid,
+        stripePaymentLink: data.stripePaymentLink || "",
+        stripePaymentLinks,
+        goCardlessPaymentLink: data.goCardlessPaymentLink || "",
+        bacsDetails: data.bacsDetails || "",
+        reviewLink: data.reviewLink || ""
+      };
+
+      if (companySettingsId) {
+        await updateDoc(doc(db, "companySettings", companySettingsId), payload);
+      } else {
+        const created = await addDoc(collection(db, "companySettings"), {
+          ...payload,
+          createdAt: serverTimestamp()
+        });
+        companySettingsId = created.id;
+      }
+
+      companySettings = payload;
       render();
     }
 
@@ -352,7 +459,7 @@
         email: data.email || "",
         address: data.address || "",
         postcode: data.postcode || "",
-        preferredPayment: data.preferredPayment || "Cash",
+        preferredPayment: normalizePaymentMethod(data.preferredPayment),
         source: data.source || "",
         notes: data.notes || "",
         roundId: data.roundId || "",
@@ -371,7 +478,7 @@
         email: data.email || "",
         address: data.address || "",
         postcode: data.postcode || "",
-        preferredPayment: data.preferredPayment || "Cash",
+        preferredPayment: normalizePaymentMethod(data.preferredPayment),
         source: data.source || "",
         notes: data.notes || "",
         roundId: data.roundId || ""
@@ -397,7 +504,7 @@
         frequencyWeeks: Number(data.frequencyWeeks || 0),
         price: Number(data.price || 0),
         dueDate: data.dueDate,
-        paymentMethod: data.paymentMethod || "Cash",
+        paymentMethod: normalizePaymentMethod(data.paymentMethod),
         notes: data.notes || "",
         status: "Due",
         paid: false,
@@ -418,7 +525,7 @@
         frequencyWeeks: Number(data.frequencyWeeks || 0),
         price: Number(data.price || 0),
         dueDate: data.dueDate,
-        paymentMethod: data.paymentMethod || "Cash",
+        paymentMethod: normalizePaymentMethod(data.paymentMethod),
         notes: data.notes || ""
       });
 
@@ -433,54 +540,117 @@
       await loadJobs();
       renderSubhead();
       render();
+      refreshOpenCalendarDay();
+    }
+
+    function setActionButtonLoading(jobId, action, label) {
+      document.querySelectorAll('[data-action="' + action + '"][data-id="' + jobId + '"]').forEach(button => {
+        button.disabled = true;
+        button.textContent = label;
+        button.classList.add("opacity-60", "cursor-not-allowed");
+      });
+    }
+
+    function refreshOpenCalendarDay() {
+      if (activeCalendarDayIso && !$("modalWrap").classList.contains("hidden")) {
+        openCalendarDay(activeCalendarDayIso);
+      }
+    }
+
+    function setFormSaving(form, label) {
+      if (!form || form.dataset.saving === "1") return false;
+      form.dataset.saving = "1";
+      form.querySelectorAll("button").forEach(button => {
+        button.disabled = true;
+        if (!button.dataset.originalText) button.dataset.originalText = button.textContent;
+      });
+      const submit = form.querySelector('button[type="submit"], button:not([type])');
+      if (submit) submit.textContent = label || "Saving...";
+      return true;
     }
 
     async function markPaid(jobId) {
-      await updateDoc(doc(db, "jobs", jobId), {
-        status: "Paid",
-        paid: true,
-        paidAt: serverTimestamp()
-      });
+      const actionKey = "paid:" + jobId;
+      if (pendingActions.has(actionKey)) return;
+      pendingActions.add(actionKey);
+      setActionButtonLoading(jobId, "paid", "Saving...");
 
-      await loadJobs();
-      renderSubhead();
-      render();
+      try {
+        const job = jobs.find(j => j.id === jobId);
+        if (!job || effectiveStatus(job) === "Paid") return;
+
+        await updateDoc(doc(db, "jobs", jobId), {
+          status: "Paid",
+          paid: true,
+          paidAt: serverTimestamp()
+        });
+
+        await loadJobs();
+        renderSubhead();
+        render();
+        refreshOpenCalendarDay();
+        openDoneMessage(job);
+      } finally {
+        pendingActions.delete(actionKey);
+      }
     }
 
     async function markDone(jobId) {
+      const actionKey = "done:" + jobId;
+      if (pendingActions.has(actionKey)) return;
+      pendingActions.add(actionKey);
+      setActionButtonLoading(jobId, "done", "Saving...");
+
       const job = jobs.find(j => j.id === jobId);
-      if (!job) return;
+      try {
+        if (!job || effectiveStatus(job) !== "Due") return;
 
-      await updateDoc(doc(db, "jobs", jobId), {
-        status: "Unpaid",
-        doneAt: serverTimestamp()
-      });
-
-      const fw = Number(job.frequencyWeeks || 0);
-      if (fw !== 0) {
-        const nextDue = fw === 52
-          ? addMonthsISO(job.dueDate || todayISO(), 12)
-          : addDaysISO(job.dueDate || todayISO(), fw * 7);
-
-        await addDoc(collection(db, "jobs"), {
-          ownerUid: uid,
-          customerId: job.customerId,
-          roundId: job.roundId || "",
-          service: job.service || "Window Clean",
-          frequencyWeeks: fw,
-          price: Number(job.price || 0),
-          dueDate: nextDue,
-          paymentMethod: job.paymentMethod || "Cash",
-          notes: job.notes || "",
-          status: "Due",
-          paid: false,
-          createdAt: serverTimestamp()
+        await updateDoc(doc(db, "jobs", jobId), {
+          status: "Unpaid",
+          doneAt: serverTimestamp()
         });
-      }
 
-      await loadJobs();
-      renderSubhead();
-      render();
+        const fw = Number(job.frequencyWeeks || 0);
+        if (fw !== 0) {
+          const nextDue = fw === 52
+            ? addMonthsISO(job.dueDate || todayISO(), 12)
+            : addDaysISO(job.dueDate || todayISO(), fw * 7);
+          const existingNext = jobs.find(j =>
+            j.id !== job.id &&
+            j.customerId === job.customerId &&
+            j.service === job.service &&
+            Number(j.frequencyWeeks || 0) === fw &&
+            j.dueDate === nextDue &&
+            effectiveStatus(j) === "Due" &&
+            (j.completedFromJobId === jobId || !j.completedFromJobId)
+          );
+
+          if (!existingNext) {
+            await addDoc(collection(db, "jobs"), {
+              ownerUid: uid,
+              customerId: job.customerId,
+              roundId: job.roundId || "",
+              service: job.service || "Window Clean",
+              frequencyWeeks: fw,
+              price: Number(job.price || 0),
+              dueDate: nextDue,
+              paymentMethod: normalizePaymentMethod(job.paymentMethod),
+              notes: job.notes || "",
+              status: "Due",
+              paid: false,
+              completedFromJobId: jobId,
+              createdAt: serverTimestamp()
+            });
+          }
+        }
+
+        await loadJobs();
+        renderSubhead();
+        render();
+        refreshOpenCalendarDay();
+      } finally {
+        pendingActions.delete(actionKey);
+      }
     }
 
     async function skipJob(jobId) {
@@ -505,38 +675,240 @@
 
       await loadJobs();
       render();
+      refreshOpenCalendarDay();
+    }
+
+    async function moveJobOnDate(jobId, direction) {
+      const job = jobs.find(j => j.id === jobId);
+      if (!job || !job.dueDate) return;
+
+      const dayJobs = jobsOnDate(job.dueDate).slice();
+      const index = dayJobs.findIndex(j => j.id === jobId);
+      const nextIndex = index + direction;
+      if (index < 0 || nextIndex < 0 || nextIndex >= dayJobs.length) return;
+
+      const moved = dayJobs.slice();
+      const tmp = moved[index];
+      moved[index] = moved[nextIndex];
+      moved[nextIndex] = tmp;
+
+      await Promise.all(moved.map((j, i) => updateDoc(doc(db, "jobs", j.id), { routeOrder: i + 1 })));
+      await loadJobs();
+      render();
+      refreshOpenCalendarDay();
+    }
+
+    function parseCSV(text) {
+      const rows = [];
+      let row = [];
+      let value = "";
+      let quoted = false;
+
+      for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        const next = text[i + 1];
+        if (quoted && ch === '"' && next === '"') {
+          value += '"';
+          i++;
+        } else if (ch === '"') {
+          quoted = !quoted;
+        } else if (ch === "," && !quoted) {
+          row.push(value);
+          value = "";
+        } else if ((ch === "\n" || ch === "\r") && !quoted) {
+          if (ch === "\r" && next === "\n") i++;
+          row.push(value);
+          if (row.some(cell => cell.trim())) rows.push(row);
+          row = [];
+          value = "";
+        } else {
+          value += ch;
+        }
+      }
+
+      row.push(value);
+      if (row.some(cell => cell.trim())) rows.push(row);
+      return rows;
+    }
+
+    function cleanHeader(value) {
+      return String(value || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+    }
+
+    function csvValue(row, headers, names) {
+      for (const name of names) {
+        const index = headers.indexOf(cleanHeader(name));
+        if (index >= 0) return String(row[index] || "").trim();
+      }
+      return "";
+    }
+
+    function frequencyFromText(value) {
+      const text = String(value || "").toLowerCase();
+      if (!text) return 4;
+      if (text.includes("one")) return 0;
+      if (text.includes("month") || text.includes("year") || text.includes("annual")) return 52;
+      const match = text.match(/\d+/);
+      return match ? Number(match[0]) : 4;
+    }
+
+    async function importCustomersCSV(file) {
+      if (!file) {
+        alert("Choose a CSV file first.");
+        return;
+      }
+
+      const text = await file.text();
+      const rows = parseCSV(text);
+      if (rows.length < 2) {
+        alert("No rows found in that CSV.");
+        return;
+      }
+
+      const headers = rows[0].map(cleanHeader);
+      const dataRows = rows.slice(1);
+      if (!confirm("Import " + dataRows.length + " CSV rows? This only adds data and will not delete existing customers.")) return;
+
+      let importedCustomers = 0;
+      let importedJobs = 0;
+
+      for (const row of dataRows) {
+        const name = csvValue(row, headers, ["name", "customer", "customer name"]);
+        const address = csvValue(row, headers, ["address", "line1", "street"]);
+        const postcode = csvValue(row, headers, ["postcode", "post code", "zip"]);
+        const phone = csvValue(row, headers, ["phone", "mobile", "telephone"]);
+        const email = csvValue(row, headers, ["email", "email address"]);
+        const notes = csvValue(row, headers, ["notes", "note"]);
+        const roundName = csvValue(row, headers, ["round", "round name"]);
+        const payment = normalizePaymentMethod(csvValue(row, headers, ["payment", "payment method", "how they pay"]) || "Cash");
+        const round = rounds.find(r => String(r.name || "").toLowerCase() === roundName.toLowerCase());
+
+        const customerRef = await addDoc(collection(db, "customers"), {
+          ownerUid: uid,
+          active: true,
+          name: name || address || "Imported customer",
+          phone,
+          email,
+          address,
+          postcode,
+          preferredPayment: payment,
+          source: "CSV import",
+          notes,
+          roundId: round ? round.id : "",
+          createdAt: serverTimestamp()
+        });
+        importedCustomers++;
+
+        const dueDate = csvValue(row, headers, ["due date", "duedate", "next clean", "nextclean"]);
+        const price = csvValue(row, headers, ["price", "amount", "charge"]);
+        if (dueDate || price) {
+          await addDoc(collection(db, "jobs"), {
+            ownerUid: uid,
+            customerId: customerRef.id,
+            roundId: round ? round.id : "",
+            service: csvValue(row, headers, ["service"]) || "Window Clean",
+            frequencyWeeks: frequencyFromText(csvValue(row, headers, ["frequency", "freq"])),
+            price: Number(String(price || "0").replace(/[^0-9.]/g, "")) || 0,
+            dueDate: dueDate || todayISO(),
+            paymentMethod: payment,
+            notes,
+            status: "Due",
+            paid: false,
+            createdAt: serverTimestamp()
+          });
+          importedJobs++;
+        }
+      }
+
+      await refreshAll();
+      setNotice("Imported " + importedCustomers + " customers and " + importedJobs + " jobs.");
+      setTimeout(() => setNotice(""), 4000);
     }
 
     function messagePayment(job, customer) {
+      const link = paymentLinkFor(job);
+      const method = normalizePaymentMethod(job && job.paymentMethod);
       return "Hi " + (customer && customer.name ? customer.name : "there") +
         ", just a quick reminder your window clean payment of " +
         pounds(job && job.price ? job.price : 0) +
-        " is still outstanding. Thanks, Lewis.";
+        " is still outstanding." +
+        (link ? "\n\nPayment link: " + link : "") +
+        (!link && method === "Bank transfer" && companySettings.bacsDetails ? "\n\nBank details:\n" + companySettings.bacsDetails : "") +
+        "\n\nThanks, Lewis.";
     }
 
     function messageCleaned(job, customer) {
+      const link = paymentLinkFor(job);
+      const method = normalizePaymentMethod(job && job.paymentMethod);
       return "Hi " + (customer && customer.name ? customer.name : "there") +
         ", your windows have been cleaned today. Amount due is " +
         pounds(job && job.price ? job.price : 0) +
-        ". Thanks, Lewis.";
+        "." +
+        (method === "GoCardless" ? "\n\nI'll request/collect this by GoCardless." : "") +
+        (method === "Cash" ? "\n\nPlease leave cash or pay when convenient." : "") +
+        (method === "Bank transfer" && companySettings.bacsDetails ? "\n\nBank details:\n" + companySettings.bacsDetails : "") +
+        (link ? "\n\nPayment link: " + link : "") +
+        "\n\nThanks, Lewis.";
     }
 
     function messageReview(customer) {
       return "Hi " + (customer && customer.name ? customer.name : "there") +
-        ", thanks again for using me for your window cleaning. If you're happy with the service, a quick Google review would really help. Thanks, Lewis.";
+        ", thanks again for using me for your window cleaning. If you're happy with the service, a quick Google review would really help." +
+        (companySettings.reviewLink ? "\n\n" + companySettings.reviewLink : "") +
+        "\n\nThanks, Lewis.";
+    }
+
+    function messageTomorrowReminder(job, customer) {
+      const tomorrow = addDaysISO(todayISO(), 1);
+      const when = job && job.dueDate === tomorrow ? "tomorrow" : "on " + formatDate(job && job.dueDate);
+      return "Hi " + (customer && customer.name ? customer.name : "there") +
+        ", just a quick reminder your windows are due to be cleaned " + when + ". Thanks, Lewis.";
     }
 
     function messageInvoice(job, customer) {
       const parts = [];
       if (customer && customer.address) parts.push(customer.address);
       if (customer && customer.postcode) parts.push(customer.postcode);
+      const link = paymentLinkFor(job);
 
       return "Hi " + (customer && customer.name ? customer.name : "there") + "\n\n" +
         "Your " + (job && job.service ? job.service : "Window Clean") +
-        " (" + (job && job.dueDate ? job.dueDate : "") + ") is done.\n\n" +
+        " (" + (job && job.dueDate ? formatDate(job.dueDate) : "") + ") is done.\n\n" +
         "Amount due: " + pounds(job && job.price ? job.price : 0) + "\n" +
         (parts.length ? "Address: " + parts.join(", ") + "\n" : "") +
+        (link ? "Payment link: " + link + "\n" : "") +
+        (!link && normalizePaymentMethod(job && job.paymentMethod) === "Bank transfer" && companySettings.bacsDetails ? "Bank details:\n" + companySettings.bacsDetails + "\n" : "") +
         "\nThanks, Lewis";
+    }
+
+    function paymentLinkFor(job) {
+      const method = normalizePaymentMethod(job && job.paymentMethod);
+      if (method === "Stripe") {
+        const links = companySettings.stripePaymentLinks || {};
+        return links[priceKey(job && job.price)] || companySettings.stripePaymentLink || "";
+      }
+      if (method === "GoCardless") return companySettings.goCardlessPaymentLink || "";
+      return "";
+    }
+
+    function openDoneMessage(job) {
+      const customer = getCustomerById(job.customerId);
+      const method = normalizePaymentMethod(job.paymentMethod);
+      openModal("Clean marked done",
+        '<div class="grid gap-4">' +
+          '<div class="p-4 rounded-2xl bg-slate-50 border border-slate-200">' +
+            '<div class="text-sm text-slate-500">Payment method</div>' +
+            '<div class="mt-1 flex items-center gap-2">' + paymentBadge(method) + '<span class="text-sm font-medium">' + escHtml(paymentActionText(job)) + '</span></div>' +
+          '</div>' +
+          '<div class="grid gap-2">' +
+            '<button data-action="cleanedText" data-id="' + job.id + '" class="px-3 py-3 rounded-xl bg-slate-900 text-white text-sm font-medium">Copy cleaned today message</button>' +
+            '<button data-action="paymentReminder" data-id="' + job.id + '" class="px-3 py-3 rounded-xl bg-white border border-slate-200 text-sm font-medium">Copy payment reminder</button>' +
+            '<button data-action="reviewText" data-id="' + job.id + '" class="px-3 py-3 rounded-xl bg-white border border-slate-200 text-sm font-medium">Copy review request</button>' +
+          '</div>' +
+          '<div class="text-sm text-slate-600">' + escHtml(customer && customer.name ? customer.name : "Customer") + ' • ' + escHtml(formatDate(job.dueDate)) + ' • ' + pounds(job.price) + '</div>' +
+        '</div>'
+      );
+      wireJobButtons($("modalBody"));
     }
 
     async function copyToClipboard(text) {
@@ -571,7 +943,8 @@
     }
 
     function paymentOptionsHtml(selected) {
-      return PAYMENTS.map(p => '<option ' + (selected === p ? "selected" : "") + '>' + p + '</option>').join("");
+      const current = normalizePaymentMethod(selected);
+      return PAYMENTS.map(p => '<option ' + (current === p ? "selected" : "") + '>' + p + '</option>').join("");
     }
 
     function setupRoundAutoFill(formId, currentJobId) {
@@ -581,6 +954,7 @@
       const roundSelect = form.querySelector('[name="roundId"]');
       const customerSelect = form.querySelector('[name="customerId"]');
       const dueInput = form.querySelector('[name="dueDate"]');
+      const paymentSelect = form.querySelector('[name="paymentMethod"]');
       const hint = form.querySelector("[data-round-hint]");
 
       function updateFromRound() {
@@ -595,7 +969,7 @@
 
         if (hint) {
           hint.textContent = nextDate
-            ? "Next round date: " + nextDate + " (" + count + " job" + (count === 1 ? "" : "s") + ")"
+            ? "Next round date: " + formatDate(nextDate) + " (" + count + " job" + (count === 1 ? "" : "s") + ")"
             : "No future jobs found in this round yet.";
         }
 
@@ -606,6 +980,7 @@
         customerSelect.addEventListener("change", () => {
           const c = getCustomerById(customerSelect.value);
           if (c && c.roundId) roundSelect.value = c.roundId;
+          if (c && paymentSelect) paymentSelect.value = normalizePaymentMethod(c.preferredPayment || "Cash");
           updateFromRound();
         });
       }
@@ -645,8 +1020,14 @@
       const address = c && c.address ? c.address : "";
       const postcode = c && c.postcode ? c.postcode : "";
       const notes = job.notes || (c && c.notes ? c.notes : "");
+      const payment = normalizePaymentMethod(job.paymentMethod || (c && c.preferredPayment) || "Cash");
 
       let buttons = "";
+
+      if (job.dueDate && (status === "Due" || status === "Unpaid")) {
+        buttons += '<button data-action="moveUp" data-id="' + job.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Up</button>';
+        buttons += '<button data-action="moveDown" data-id="' + job.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Down</button>';
+      }
 
       if (status === "Due") {
         buttons += '<button data-action="done" data-id="' + job.id + '" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">Done</button>';
@@ -657,7 +1038,7 @@
 
       if (status === "Unpaid") {
         buttons += '<button data-action="paid" data-id="' + job.id + '" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">Paid</button>';
-        buttons += '<button data-action="paymentReminder" data-id="' + job.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Reminder</button>';
+        buttons += '<button data-action="paymentReminder" data-id="' + job.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Copy reminder</button>';
       }
 
       buttons += '<button data-action="viewJob" data-id="' + job.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">View</button>';
@@ -667,9 +1048,10 @@
 
       return '' +
         '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm mb-3">' +
-          '<div class="text-sm text-slate-500">' + escHtml(job.dueDate || "") + ' • ' + escHtml(status) + statusBadge(status) + roundBadge(r) + '</div>' +
+          '<div class="text-sm text-slate-500">' + escHtml(formatDate(job.dueDate)) + ' • ' + escHtml(status) + statusBadge(status) + roundBadge(r) + '</div>' +
           '<div class="font-semibold">' + escHtml(c && c.name ? c.name : "Unknown customer") + '</div>' +
           '<div class="text-sm text-slate-700 mt-1">' + escHtml(job.service || "") + ' • ' + escHtml(freqLabel(job.frequencyWeeks)) + ' • <span class="font-semibold">' + pounds(job.price) + '</span></div>' +
+          '<div class="mt-2 flex items-center gap-2">' + paymentBadge(payment) + '<span class="text-xs text-slate-500">' + escHtml(paymentActionText({ paymentMethod: payment })) + '</span></div>' +
           '<div class="text-sm text-slate-600 mt-2">' + escHtml(address + (postcode ? ", " + postcode : "")) + '</div>' +
           '<a class="text-sm underline" target="_blank" href="' + mapLink(address, postcode) + '">Open in Maps</a>' +
           (notes ? '<div class="text-sm text-slate-500 mt-2 whitespace-pre-wrap">' + escHtml(notes) + '</div>' : "") +
@@ -683,6 +1065,7 @@
       const stats = customerStats(c.id);
       const since = isTimestamp(c.createdAt) ? todayISO(c.createdAt.toDate()).split("-").reverse().join("/") : "—";
       const active = c.active !== false;
+      const payment = normalizePaymentMethod(c.preferredPayment || "Cash");
 
       return '' +
         '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm mb-3 ' + (active ? "" : "opacity-70") + '">' +
@@ -691,7 +1074,8 @@
               '<div class="font-semibold">' + escHtml(c.name || "Unnamed") + (active ? "" : ' <span class="ml-2 text-xs px-2 py-1 rounded-lg bg-slate-100">Disabled</span>') + roundBadge(r) + '</div>' +
               '<div class="text-sm text-slate-600">' + escHtml((c.address || "") + (c.postcode ? " " + c.postcode : "")) + '</div>' +
               '<div class="text-sm text-slate-600">' + escHtml(c.phone || "") + '</div>' +
-              '<div class="text-sm text-slate-500 mt-2">Next clean: ' + (next ? escHtml(next.dueDate + " • " + (next.service || "") + " • " + pounds(next.price)) : "No upcoming job") + '</div>' +
+              '<div class="mt-2">' + paymentBadge(payment) + '</div>' +
+              '<div class="text-sm text-slate-500 mt-2">Next clean: ' + (next ? escHtml(formatDate(next.dueDate) + " • " + (next.service || "") + " • " + freqLabel(next.frequencyWeeks) + " • " + pounds(next.price)) : "No upcoming job") + '</div>' +
               '<div class="text-xs text-slate-500 mt-2">' + stats.cleans + ' cleans • Paid ' + pounds(stats.paid) + ' • Unpaid ' + pounds(stats.unpaid) + ' • Since ' + since + '</div>' +
               (c.notes ? '<div class="text-sm text-slate-500 mt-2 whitespace-pre-wrap">' + escHtml(c.notes) + '</div>' : "") +
             '</div>' +
@@ -713,6 +1097,8 @@
       scope.querySelectorAll('[data-action="done"]').forEach(b => b.addEventListener("click", () => markDone(b.dataset.id)));
       scope.querySelectorAll('[data-action="paid"]').forEach(b => b.addEventListener("click", () => markPaid(b.dataset.id)));
       scope.querySelectorAll('[data-action="skip"]').forEach(b => b.addEventListener("click", () => skipJob(b.dataset.id)));
+      scope.querySelectorAll('[data-action="moveUp"]').forEach(b => b.addEventListener("click", () => moveJobOnDate(b.dataset.id, -1)));
+      scope.querySelectorAll('[data-action="moveDown"]').forEach(b => b.addEventListener("click", () => moveJobOnDate(b.dataset.id, 1)));
       scope.querySelectorAll('[data-action="reschedule"]').forEach(b => b.addEventListener("click", () => openReschedule(b.dataset.id)));
       scope.querySelectorAll('[data-action="editJob"]').forEach(b => b.addEventListener("click", () => openEditJob(b.dataset.id)));
       scope.querySelectorAll('[data-action="deleteJob"]').forEach(b => b.addEventListener("click", () => deleteJob(b.dataset.id)));
@@ -736,6 +1122,11 @@
       scope.querySelectorAll('[data-action="reviewText"]').forEach(b => b.addEventListener("click", () => {
         const j = jobs.find(x => x.id === b.dataset.id);
         copyToClipboard(messageReview(j ? getCustomerById(j.customerId) : null));
+      }));
+
+      scope.querySelectorAll('[data-action="tomorrowReminder"]').forEach(b => b.addEventListener("click", () => {
+        const j = jobs.find(x => x.id === b.dataset.id);
+        copyToClipboard(messageTomorrowReminder(j, j ? getCustomerById(j.customerId) : null));
       }));
     }
 
@@ -844,6 +1235,7 @@
 
       $("fRound").addEventListener("submit", async e => {
         e.preventDefault();
+        if (!setFormSaving(e.target)) return;
         await createRound(Object.fromEntries(new FormData(e.target).entries()));
         e.target.reset();
       });
@@ -857,6 +1249,65 @@
         return;
       }
       content.innerHTML = list.map(jobCard).join("");
+      wireJobButtons();
+    }
+
+    function routeOrderCard(job, index, total) {
+      const c = getCustomerById(job.customerId);
+      const address = c ? ((c.address || "") + (c.postcode ? ", " + c.postcode : "")) : "Unknown address";
+      const payment = normalizePaymentMethod(job.paymentMethod || (c && c.preferredPayment) || "Cash");
+      return '' +
+        '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">' +
+          '<div class="flex items-start gap-3">' +
+            '<div class="shrink-0 w-9 h-9 rounded-full bg-slate-900 text-white flex items-center justify-center font-bold">' + (index + 1) + '</div>' +
+            '<div class="min-w-0 flex-1">' +
+              '<div class="font-semibold">' + escHtml(c && c.name ? c.name : "Unknown customer") + '</div>' +
+              '<div class="text-sm text-slate-600">' + escHtml(address) + '</div>' +
+              '<div class="text-sm text-slate-500 mt-1">' + escHtml(job.service || "") + ' • ' + escHtml(freqLabel(job.frequencyWeeks)) + ' • ' + pounds(job.price) + '</div>' +
+              '<div class="mt-2 flex items-center gap-2">' + paymentBadge(payment) + '<span class="text-xs text-slate-500">' + escHtml(paymentActionText({ paymentMethod: payment })) + '</span></div>' +
+            '</div>' +
+          '</div>' +
+          '<div class="mt-3 grid grid-cols-2 gap-2">' +
+            '<button data-action="moveUp" data-id="' + job.id + '" ' + (index === 0 ? "disabled" : "") + ' class="px-3 py-3 rounded-xl bg-white border border-slate-200 text-sm font-medium disabled:opacity-40">Move up</button>' +
+            '<button data-action="moveDown" data-id="' + job.id + '" ' + (index === total - 1 ? "disabled" : "") + ' class="px-3 py-3 rounded-xl bg-white border border-slate-200 text-sm font-medium disabled:opacity-40">Move down</button>' +
+            '<button data-action="tomorrowReminder" data-id="' + job.id + '" class="col-span-2 px-3 py-3 rounded-xl bg-white border border-slate-200 text-sm font-medium">Copy reminder text</button>' +
+          '</div>' +
+        '</div>';
+    }
+
+    function renderRouteOrder() {
+      const today = todayISO();
+      const tomorrow = addDaysISO(today, 1);
+      const list = jobsOnDate(routeDate).filter(j => effectiveStatus(j) === "Due");
+
+      content.innerHTML =
+        '<div class="grid gap-4">' +
+          '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">' +
+            '<div class="font-semibold text-lg">Route order</div>' +
+            '<div class="text-sm text-slate-500 mt-1">Rearrange the order you want to clean jobs for a day. This saves for Today, Calendar, and this Route view.</div>' +
+            '<div class="mt-3 grid gap-2 sm:grid-cols-[1fr_auto_auto]">' +
+              '<input id="routeDateInput" type="date" value="' + escAttr(routeDate) + '" class="px-3 py-2 rounded-xl border border-slate-200" />' +
+              '<button id="routeToday" class="px-3 py-2 rounded-xl ' + (routeDate === today ? "bg-slate-900 text-white" : "bg-white border border-slate-200") + ' text-sm font-medium">Today</button>' +
+              '<button id="routeTomorrow" class="px-3 py-2 rounded-xl ' + (routeDate === tomorrow ? "bg-slate-900 text-white" : "bg-white border border-slate-200") + ' text-sm font-medium">Tomorrow</button>' +
+            '</div>' +
+          '</div>' +
+          (list.length
+            ? '<div class="grid gap-3">' + list.map((j, i) => routeOrderCard(j, i, list.length)).join("") + '</div>'
+            : '<div class="p-4 rounded-2xl bg-white border border-slate-200 text-slate-600">No due jobs for ' + escHtml(formatDate(routeDate)) + '.</div>') +
+        '</div>';
+
+      $("routeDateInput").addEventListener("change", e => {
+        routeDate = e.target.value || todayISO();
+        renderRouteOrder();
+      });
+      $("routeToday").addEventListener("click", () => {
+        routeDate = today;
+        renderRouteOrder();
+      });
+      $("routeTomorrow").addEventListener("click", () => {
+        routeDate = tomorrow;
+        renderRouteOrder();
+      });
       wireJobButtons();
     }
 
@@ -892,6 +1343,61 @@
           '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm"><div class="text-sm text-slate-500">Unpaid total</div><div class="text-2xl font-bold">' + pounds(unpaidTotal) + '</div></div>' +
           '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm"><div class="text-sm text-slate-500">Active customers</div><div class="text-2xl font-bold">' + activeCustomers + '</div></div>' +
         '</div>';
+    }
+
+    function renderSettings() {
+      const stripeLinks = companySettings.stripePaymentLinks || {};
+      const stripeRows = [];
+      for (let amount = 10; amount <= 40; amount++) {
+        stripeRows.push(
+          '<div class="grid grid-cols-[70px_1fr] gap-2 items-center">' +
+            '<label class="text-sm font-medium">£' + amount + '</label>' +
+            '<input name="stripe_' + amount + '" value="' + escAttr(stripeLinks[String(amount)] || "") + '" placeholder="Stripe link for £' + amount + '" class="px-3 py-2 rounded-xl border border-slate-200" />' +
+          '</div>'
+        );
+      }
+
+      content.innerHTML =
+        '<div class="grid gap-4">' +
+        '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">' +
+          '<div class="font-semibold text-lg mb-3">Company settings</div>' +
+          '<form id="fSettings" class="grid gap-3">' +
+            '<div class="grid gap-1"><label class="text-sm font-medium">Fallback Stripe link</label><input name="stripePaymentLink" value="' + escAttr(companySettings.stripePaymentLink || "") + '" placeholder="Used if no exact price link is saved" class="px-3 py-2 rounded-xl border border-slate-200" /></div>' +
+            '<div class="grid gap-1"><label class="text-sm font-medium">GoCardless payment link</label><input name="goCardlessPaymentLink" value="' + escAttr(companySettings.goCardlessPaymentLink || "") + '" placeholder="https://pay.gocardless.com/..." class="px-3 py-2 rounded-xl border border-slate-200" /></div>' +
+            '<div class="grid gap-1"><label class="text-sm font-medium">BACS / bank transfer details</label><textarea name="bacsDetails" rows="3" placeholder="Account name, sort code, account number" class="px-3 py-2 rounded-xl border border-slate-200">' + escHtml(companySettings.bacsDetails || "") + '</textarea></div>' +
+            '<div class="grid gap-1"><label class="text-sm font-medium">Review link</label><input name="reviewLink" value="' + escAttr(companySettings.reviewLink || "") + '" placeholder="Google review link" class="px-3 py-2 rounded-xl border border-slate-200" /></div>' +
+            '<div class="border-t border-slate-200 pt-3">' +
+              '<div class="font-semibold mb-2">Stripe links by price</div>' +
+              '<div class="grid gap-2">' + stripeRows.join("") + '</div>' +
+            '</div>' +
+            '<button class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">Save settings</button>' +
+          '</form>' +
+        '</div>' +
+        '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">' +
+          '<div class="font-semibold text-lg mb-3">Import customers</div>' +
+          '<div class="grid gap-3">' +
+            '<input id="csvImportFile" type="file" accept=".csv,text/csv" class="px-3 py-2 rounded-xl border border-slate-200 bg-white" />' +
+            '<div class="text-sm text-slate-500">CSV columns can include name, address, postcode, phone, email, payment, price, frequency, due date, round, notes.</div>' +
+            '<button id="btnImportCSV" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">Import CSV</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">' +
+          '<div class="font-semibold text-lg mb-3">Exports</div>' +
+          '<div class="flex flex-wrap gap-2">' +
+            '<button id="btnExportCustomers" class="px-3 py-2 rounded-xl bg-white text-slate-900 text-sm font-medium shadow border border-slate-200">Export Customers</button>' +
+            '<button id="btnExportJobs" class="px-3 py-2 rounded-xl bg-white text-slate-900 text-sm font-medium shadow border border-slate-200">Export Jobs</button>' +
+          '</div>' +
+        '</div>' +
+        '</div>';
+
+      $("fSettings").addEventListener("submit", async e => {
+        e.preventDefault();
+        if (!setFormSaving(e.target)) return;
+        await saveCompanySettings(Object.fromEntries(new FormData(e.target).entries()));
+      });
+
+      wireExportButtons();
+      $("btnImportCSV").addEventListener("click", () => importCustomersCSV($("csvImportFile").files[0]));
     }
 
     function renderCalendar() {
@@ -968,19 +1474,27 @@
     }
 
     function openCalendarDay(iso) {
-      const list = sortJobsByDue(jobsOnDate(iso).slice());
+      activeCalendarDayIso = iso;
+      const list = jobsOnDate(iso).slice();
 
-      const rows = list.length ? list.map(j => {
+      const rows = list.length ? list.map((j, index) => {
         const c = getCustomerById(j.customerId);
-        return '<button data-day-job="' + j.id + '" class="w-full text-left border border-slate-200 rounded-xl p-3 hover:border-slate-400">' +
-          '<div class="font-semibold">' + escHtml(c && c.address ? c.address : "Unknown address") + ' • ' + pounds(j.price) + '</div>' +
-          '<div class="text-sm text-slate-600">' + escHtml(j.service || "") + ' • ' + escHtml(effectiveStatus(j)) + '</div>' +
-        '</button>';
+        return '<div class="border border-slate-200 rounded-xl p-3">' +
+          '<button data-day-job="' + j.id + '" class="w-full text-left hover:text-slate-700">' +
+            '<div class="font-semibold">' + escHtml(c && c.address ? c.address : "Unknown address") + ' • ' + pounds(j.price) + '</div>' +
+            '<div class="text-sm text-slate-600">' + escHtml(j.service || "") + ' • ' + escHtml(freqLabel(j.frequencyWeeks)) + ' • ' + escHtml(effectiveStatus(j)) + '</div>' +
+          '</button>' +
+          '<div class="mt-2 flex flex-wrap gap-2">' +
+            '<button data-action="moveUp" data-id="' + j.id + '" ' + (index === 0 ? "disabled" : "") + ' class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm disabled:opacity-40">Up</button>' +
+            '<button data-action="moveDown" data-id="' + j.id + '" ' + (index === list.length - 1 ? "disabled" : "") + ' class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm disabled:opacity-40">Down</button>' +
+            '<button data-action="deleteJob" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Delete job</button>' +
+          '</div>' +
+        '</div>';
       }).join("") : '<div class="text-sm text-slate-500">No jobs on this date.</div>';
 
-      openModal("Jobs on " + iso,
+      openModal("Jobs on " + formatDate(iso),
         '<div class="grid gap-3">' +
-          '<button id="btnAddJobOnDate" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">+ Add job on ' + iso + '</button>' +
+          '<button id="btnAddJobOnDate" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">+ Add job on ' + formatDate(iso) + '</button>' +
           rows +
         '</div>'
       );
@@ -994,6 +1508,7 @@
         closeModal();
         openJobDetails(b.dataset.dayJob);
       }));
+      wireJobButtons($("modalBody"));
     }
 
     function render() {
@@ -1001,9 +1516,11 @@
       renderSubhead();
 
       if (activeTab === "customers") { renderCustomers(); return; }
+      if (activeTab === "route") { renderRouteOrder(); return; }
       if (activeTab === "rounds") { renderRounds(); return; }
       if (activeTab === "calendar") { renderCalendar(); return; }
       if (activeTab === "stats") { renderStats(); return; }
+      if (activeTab === "settings") { renderSettings(); return; }
 
       const today = todayISO();
       const weekEnd = addDaysISO(today, 6);
@@ -1032,7 +1549,7 @@
           '<div class="grid gap-1"><label class="text-sm font-medium">Address</label><input name="address" class="px-3 py-2 rounded-xl border border-slate-200" /></div>' +
           '<div class="grid grid-cols-2 gap-3">' +
             '<div class="grid gap-1"><label class="text-sm font-medium">Postcode</label><input name="postcode" class="px-3 py-2 rounded-xl border border-slate-200" /></div>' +
-            '<div class="grid gap-1"><label class="text-sm font-medium">Payment</label><select name="preferredPayment" class="px-3 py-2 rounded-xl border border-slate-200">' + paymentOptionsHtml("Cash") + '</select></div>' +
+            '<div class="grid gap-1"><label class="text-sm font-medium">How they pay</label><select name="preferredPayment" class="px-3 py-2 rounded-xl border border-slate-200">' + paymentOptionsHtml("Cash") + '</select></div>' +
           '</div>' +
           '<div class="grid grid-cols-2 gap-3">' +
             '<div class="grid gap-1"><label class="text-sm font-medium">Source</label><select name="source" class="px-3 py-2 rounded-xl border border-slate-200">' + sourceOptionsHtml("") + '</select></div>' +
@@ -1045,6 +1562,7 @@
 
       $("fCustomer").addEventListener("submit", async e => {
         e.preventDefault();
+        if (!setFormSaving(e.target)) return;
         await createCustomer(Object.fromEntries(new FormData(e.target).entries()));
         closeModal();
       });
@@ -1064,7 +1582,7 @@
           '<div class="grid gap-1"><label class="text-sm font-medium">Address</label><input name="address" value="' + escAttr(c.address || "") + '" class="px-3 py-2 rounded-xl border border-slate-200" /></div>' +
           '<div class="grid grid-cols-2 gap-3">' +
             '<div class="grid gap-1"><label class="text-sm font-medium">Postcode</label><input name="postcode" value="' + escAttr(c.postcode || "") + '" class="px-3 py-2 rounded-xl border border-slate-200" /></div>' +
-            '<div class="grid gap-1"><label class="text-sm font-medium">Payment</label><select name="preferredPayment" class="px-3 py-2 rounded-xl border border-slate-200">' + paymentOptionsHtml(c.preferredPayment || "Cash") + '</select></div>' +
+            '<div class="grid gap-1"><label class="text-sm font-medium">How they pay</label><select name="preferredPayment" class="px-3 py-2 rounded-xl border border-slate-200">' + paymentOptionsHtml(c.preferredPayment || "Cash") + '</select></div>' +
           '</div>' +
           '<div class="grid grid-cols-2 gap-3">' +
             '<div class="grid gap-1"><label class="text-sm font-medium">Source</label><select name="source" class="px-3 py-2 rounded-xl border border-slate-200">' + sourceOptionsHtml(c.source || "") + '</select></div>' +
@@ -1077,6 +1595,7 @@
 
       $("fEditCustomer").addEventListener("submit", async e => {
         e.preventDefault();
+        if (!setFormSaving(e.target)) return;
         await updateCustomer(customerId, Object.fromEntries(new FormData(e.target).entries()));
         closeModal();
       });
@@ -1095,6 +1614,7 @@
       const selectedCustomerId = prefillCustomerId || activeCustomers[0].id;
       const selectedCustomer = getCustomerById(selectedCustomerId);
       const defaultRoundId = selectedCustomer && selectedCustomer.roundId ? selectedCustomer.roundId : "";
+      const defaultPayment = normalizePaymentMethod(selectedCustomer && selectedCustomer.preferredPayment ? selectedCustomer.preferredPayment : "Cash");
       const dateValue = prefillDate || getNextDateForRound(defaultRoundId, "") || todayISO();
 
       openModal("Add Job",
@@ -1109,7 +1629,7 @@
             '<div class="grid gap-1"><label class="text-sm font-medium">Due date</label><input name="dueDate" type="date" value="' + dateValue + '" class="px-3 py-2 rounded-xl border border-slate-200" /></div>' +
             '<div class="grid gap-1"><label class="text-sm font-medium">Price (£)</label><input name="price" type="number" step="0.01" class="px-3 py-2 rounded-xl border border-slate-200" /></div>' +
           '</div>' +
-          '<div class="grid gap-1"><label class="text-sm font-medium">Payment method</label><select name="paymentMethod" class="px-3 py-2 rounded-xl border border-slate-200">' + paymentOptionsHtml("Cash") + '</select></div>' +
+          '<div class="grid gap-1"><label class="text-sm font-medium">Payment method</label><select name="paymentMethod" class="px-3 py-2 rounded-xl border border-slate-200">' + paymentOptionsHtml(defaultPayment) + '</select></div>' +
           '<div class="grid gap-1"><label class="text-sm font-medium">Notes</label><textarea name="notes" rows="3" class="px-3 py-2 rounded-xl border border-slate-200"></textarea></div>' +
           '<button class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">Save</button>' +
         '</form>'
@@ -1119,6 +1639,7 @@
 
       $("fJob").addEventListener("submit", async e => {
         e.preventDefault();
+        if (!setFormSaving(e.target)) return;
         await createJob(Object.fromEntries(new FormData(e.target).entries()));
         closeModal();
       });
@@ -1150,6 +1671,7 @@
 
       $("fEditJob").addEventListener("submit", async e => {
         e.preventDefault();
+        if (!setFormSaving(e.target)) return;
         await updateJob(jobId, Object.fromEntries(new FormData(e.target).entries()));
         closeModal();
       });
@@ -1161,7 +1683,7 @@
 
       openModal("Reschedule Job",
         '<form id="fReschedule" class="grid gap-3">' +
-          '<div class="text-sm text-slate-600">Current date: ' + escHtml(j.dueDate || "") + '</div>' +
+          '<div class="text-sm text-slate-600">Current date: ' + escHtml(formatDate(j.dueDate)) + '</div>' +
           '<input name="dueDate" type="date" value="' + escAttr(j.dueDate || todayISO()) + '" class="px-3 py-2 rounded-xl border border-slate-200" />' +
           '<button class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">Save</button>' +
         '</form>'
@@ -1169,6 +1691,7 @@
 
       $("fReschedule").addEventListener("submit", async e => {
         e.preventDefault();
+        if (!setFormSaving(e.target)) return;
         await updateDoc(doc(db, "jobs", jobId), { dueDate: new FormData(e.target).get("dueDate") });
         await loadJobs();
         closeModal();
@@ -1187,10 +1710,11 @@
       openModal(c.name || "Customer",
         '<div class="grid gap-4">' +
           '<div class="grid gap-1 text-sm">' +
+            '<div><b>Name:</b> ' + escHtml(c.name || "—") + '</div>' +
             '<div><b>Address:</b> ' + escHtml((c.address || "") + (c.postcode ? " " + c.postcode : "")) + '</div>' +
             '<div><b>Phone:</b> ' + escHtml(c.phone || "") + '</div>' +
             '<div><b>Email:</b> ' + escHtml(c.email || "") + '</div>' +
-            '<div><b>Payment:</b> ' + escHtml(c.preferredPayment || "Cash") + '</div>' +
+            '<div><b>Payment:</b> ' + paymentBadge(c.preferredPayment || "Cash") + '</div>' +
             '<div><b>Source:</b> ' + escHtml(c.source || "—") + '</div>' +
             '<div><b>Customer since:</b> ' + since + '</div>' +
           '</div>' +
@@ -1199,7 +1723,11 @@
             '<div class="p-3 rounded-xl bg-slate-50 border border-slate-200"><div class="text-xs text-slate-500">Paid</div><div class="font-bold">' + pounds(stats.paid) + '</div></div>' +
             '<div class="p-3 rounded-xl bg-slate-50 border border-slate-200"><div class="text-xs text-slate-500">Unpaid</div><div class="font-bold">' + pounds(stats.unpaid) + '</div></div>' +
           '</div>' +
-          '<div class="text-sm"><b>Next clean:</b> ' + (next ? escHtml(next.dueDate + " • " + (next.service || "") + " • " + pounds(next.price)) : "No upcoming clean") + '</div>' +
+          '<div class="text-sm"><b>Jobs completed:</b> ' + stats.cleans + '</div>' +
+          '<div class="text-sm"><b>Revenue:</b> ' + pounds(stats.paid + stats.unpaid) + '</div>' +
+          '<div class="text-sm"><b>Next clean:</b> ' + (next ? escHtml(formatDate(next.dueDate) + " • " + (next.service || "") + " • " + pounds(next.price)) : "No upcoming clean") + '</div>' +
+          '<div class="text-sm"><b>Frequency:</b> ' + (next ? escHtml(freqLabel(next.frequencyWeeks)) : "—") + '</div>' +
+          '<div class="text-sm"><b>Round:</b> ' + escHtml((getRoundById(c.roundId || "") || {}).name || "—") + '</div>' +
           (c.notes ? '<div class="text-sm"><b>Notes:</b><div class="whitespace-pre-wrap text-slate-600">' + escHtml(c.notes) + '</div></div>' : "") +
           '<div class="flex flex-wrap gap-2">' +
             '<button id="detailEditCustomer" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">Edit</button>' +
@@ -1232,22 +1760,23 @@
             '<div><b>Customer:</b> ' + escHtml(c && c.name ? c.name : "Unknown") + '</div>' +
             '<div><b>Address:</b> ' + escHtml(c ? ((c.address || "") + (c.postcode ? " " + c.postcode : "")) : "") + '</div>' +
             '<div><b>Phone:</b> ' + escHtml(c && c.phone ? c.phone : "") + '</div>' +
-            '<div><b>Date:</b> ' + escHtml(j.dueDate || "") + '</div>' +
+            '<div><b>Date:</b> ' + escHtml(formatDate(j.dueDate)) + '</div>' +
             '<div><b>Service:</b> ' + escHtml(j.service || "") + '</div>' +
             '<div><b>Frequency:</b> ' + escHtml(freqLabel(j.frequencyWeeks)) + '</div>' +
             '<div><b>Price:</b> ' + pounds(j.price) + '</div>' +
             '<div><b>Status:</b> ' + escHtml(status) + '</div>' +
-            '<div><b>Payment:</b> ' + escHtml(j.paymentMethod || "") + '</div>' +
+            '<div><b>Payment:</b> ' + paymentBadge(j.paymentMethod || "") + ' <span class="text-slate-500">' + escHtml(paymentActionText(j)) + '</span></div>' +
             (j.notes ? '<div><b>Job notes:</b><div class="whitespace-pre-wrap text-slate-600">' + escHtml(j.notes) + '</div></div>' : "") +
             (c && c.notes ? '<div><b>Customer notes:</b><div class="whitespace-pre-wrap text-slate-600">' + escHtml(c.notes) + '</div></div>' : "") +
           '</div>' +
           '<div class="flex flex-wrap gap-2">' +
             (status === "Due" ? '<button data-action="done" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">Done</button>' : "") +
             (status !== "Paid" ? '<button data-action="paid" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Paid</button>' : "") +
-            '<button data-action="cleanedText" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Cleaned text</button>' +
-            '<button data-action="paymentReminder" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Reminder</button>' +
-            '<button data-action="reviewText" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Review text</button>' +
+            '<button data-action="cleanedText" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Copy cleaned today</button>' +
+            '<button data-action="paymentReminder" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Copy payment reminder</button>' +
+            '<button data-action="reviewText" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Copy review request</button>' +
             '<button data-action="editJob" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Edit</button>' +
+            '<button data-action="deleteJob" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Delete job</button>' +
           '</div>' +
         '</div>'
       );
@@ -1276,7 +1805,7 @@
       link.click();
     }
 
-    $("btnExportCustomers").addEventListener("click", () => {
+    function exportCustomers() {
       const rows = customers.map(c => {
         const r = getRoundById(c.roundId || "");
         const s = customerStats(c.id);
@@ -1298,9 +1827,9 @@
       });
 
       downloadCSV("roundmate-customers.csv", rows);
-    });
+    }
 
-    $("btnExportJobs").addEventListener("click", () => {
+    function exportJobs() {
       const rows = jobs.map(j => {
         const c = getCustomerById(j.customerId);
         const r = getRoundById(j.roundId || "");
@@ -1310,7 +1839,7 @@
           address: c && c.address ? c.address : "",
           postcode: c && c.postcode ? c.postcode : "",
           service: j.service || "",
-          dueDate: j.dueDate || "",
+          dueDate: formatDate(j.dueDate),
           frequency: freqLabel(j.frequencyWeeks),
           price: j.price || "",
           status: effectiveStatus(j),
@@ -1322,7 +1851,14 @@
       });
 
       downloadCSV("roundmate-jobs.csv", rows);
-    });
+    }
+
+    function wireExportButtons() {
+      const exportCustomersButton = $("btnExportCustomers");
+      const exportJobsButton = $("btnExportJobs");
+      if (exportCustomersButton) exportCustomersButton.addEventListener("click", exportCustomers);
+      if (exportJobsButton) exportJobsButton.addEventListener("click", exportJobs);
+    }
 
     document.querySelectorAll(".tab").forEach(b => b.addEventListener("click", () => {
       activeTab = b.dataset.tab;
