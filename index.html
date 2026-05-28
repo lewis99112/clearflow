@@ -96,6 +96,7 @@
     let calMonth = new Date().getMonth();
     let activeCalendarDayIso = "";
     let routeDate = todayISO();
+    let demoMode = false;
     const pendingActions = new Set();
 
     function escHtml(value) {
@@ -191,13 +192,30 @@
       return job.status;
     }
 
+    function isActiveCustomer(customerId) {
+      const customer = getCustomerById(customerId);
+      return !customer || customer.active !== false;
+    }
+
+    function parseMoney(value) {
+      const n = Number(String(value || "0").replace(/[^0-9.]/g, ""));
+      return Number.isFinite(n) ? n : 0;
+    }
+
     function isTimestamp(value) {
       return value && typeof value.toDate === "function";
     }
 
     function createdTime(item) {
       if (item && isTimestamp(item.createdAt)) return item.createdAt.toDate().getTime();
+      if (item && item.createdAt instanceof Date) return item.createdAt.getTime();
       return 0;
+    }
+
+    function dateValue(value) {
+      if (isTimestamp(value)) return value.toDate();
+      if (value instanceof Date) return value;
+      return null;
     }
 
     function weekStartMonday() {
@@ -297,6 +315,7 @@
       let cleans = 0;
       let paid = 0;
       let unpaid = 0;
+      let next = null;
 
       jobs.forEach(j => {
         if (j.customerId !== customerId) return;
@@ -306,14 +325,15 @@
         if (st === "Unpaid") unpaid += Number(j.price || 0);
       });
 
-      return { cleans, paid, unpaid };
+      next = getNextJobForCustomer(customerId);
+      return { cleans, paid, unpaid, next };
     }
 
     function getNextJobForCustomer(customerId) {
       const today = todayISO();
       const list = sortJobsByDue(jobs.filter(j => {
         const st = effectiveStatus(j);
-        return j.customerId === customerId && st !== "Paid" && String(j.dueDate || "") >= today;
+        return j.customerId === customerId && st === "Due" && String(j.dueDate || "") >= today;
       }));
       return list[0] || null;
     }
@@ -345,14 +365,73 @@
       let total = 0;
       jobs.forEach(j => {
         if (effectiveStatus(j) !== "Paid") return;
-        if (!isTimestamp(j.paidAt)) return;
-        if (j.paidAt.toDate().getTime() >= start) total += Number(j.price || 0);
+        const paidAt = dateValue(j.paidAt);
+        if (!paidAt) return;
+        if (paidAt.getTime() >= start) total += Number(j.price || 0);
       });
       return total;
     }
 
     function renderSubhead() {
-      subhead.textContent = "Synced • Paid this week " + pounds(paidThisWeekTotal());
+      subhead.textContent = (demoMode ? "Demo data" : "Synced") + " • Paid this week " + pounds(paidThisWeekTotal());
+    }
+
+    function loadDemoData() {
+      const names = ["A Patel", "J Smith", "M Davies", "S Wilson", "R Khan", "P Jones"];
+      const streets = ["High Street", "Church Road", "Station Road", "Victoria Road", "Mill Lane", "Queens Road"];
+      const payments = ["Cash", "Bank transfer", "Stripe", "GoCardless"];
+      rounds = [
+        { id: "demo-round-1", name: "Monday", color: "#0f172a" },
+        { id: "demo-round-2", name: "Tuesday", color: "#2563eb" }
+      ];
+      customers = [];
+      jobs = [];
+      for (let i = 0; i < 60; i++) {
+        const round = rounds[i % rounds.length];
+        const customer = {
+          id: "demo-customer-" + i,
+          ownerUid: "demo",
+          active: i % 14 !== 0,
+          name: names[i % names.length] + " " + (i + 1),
+          phone: "07" + String(700000000 + i).padStart(9, "0"),
+          email: "",
+          address: (10 + i) + " " + streets[i % streets.length],
+          postcode: "AB" + (10 + (i % 80)) + " " + (i % 9) + "CD",
+          preferredPayment: payments[i % payments.length],
+          source: "Demo",
+          notes: i % 5 === 0 ? "Access via side gate." : "",
+          roundId: round.id,
+          createdAt: new Date(Date.now() - i * 86400000)
+        };
+        customers.push(customer);
+        jobs.push({
+          id: "demo-job-" + i,
+          ownerUid: "demo",
+          customerId: customer.id,
+          roundId: round.id,
+          service: "Window Clean",
+          frequencyWeeks: i % 6 === 0 ? 8 : 4,
+          price: 10 + (i % 16),
+          dueDate: addDaysISO(todayISO(), i % 7),
+          paymentMethod: customer.preferredPayment,
+          notes: "",
+          status: "Due",
+          paid: false,
+          routeOrder: i + 1,
+          createdAt: new Date(Date.now() - i * 3600000)
+        });
+      }
+    }
+
+    function setDemoMode(enabled) {
+      demoMode = !!enabled;
+      localStorage.setItem("roundmateDemoMode", demoMode ? "1" : "0");
+      if (!demoMode) {
+        location.reload();
+        return;
+      }
+      activeTab = "today";
+      refreshAll();
     }
 
     async function loadCustomers() {
@@ -389,6 +468,12 @@
     }
 
     async function refreshAll() {
+      if (demoMode) {
+        loadDemoData();
+        renderSubhead();
+        render();
+        return;
+      }
       await Promise.all([loadCustomers(), loadJobs(), loadRounds(), loadCompanySettings()]);
       renderSubhead();
       render();
@@ -496,13 +581,35 @@
     }
 
     async function createJob(data) {
+      const price = Number(data.price || 0);
+      if (price <= 0 && !confirm("This job is £0. Save it anyway?")) return;
+      if (demoMode) {
+        jobs.push({
+          id: "demo-job-" + Date.now(),
+          ownerUid: "demo",
+          customerId: data.customerId,
+          roundId: data.roundId || "",
+          service: data.service || "Window Clean",
+          frequencyWeeks: Number(data.frequencyWeeks || 0),
+          price,
+          dueDate: data.dueDate,
+          paymentMethod: normalizePaymentMethod(data.paymentMethod),
+          notes: data.notes || "",
+          status: "Due",
+          paid: false,
+          createdAt: new Date()
+        });
+        activeTab = "today";
+        render();
+        return;
+      }
       await addDoc(collection(db, "jobs"), {
         ownerUid: uid,
         customerId: data.customerId,
         roundId: data.roundId || "",
         service: data.service || "Window Clean",
         frequencyWeeks: Number(data.frequencyWeeks || 0),
-        price: Number(data.price || 0),
+        price,
         dueDate: data.dueDate,
         paymentMethod: normalizePaymentMethod(data.paymentMethod),
         notes: data.notes || "",
@@ -518,13 +625,34 @@
     }
 
     async function updateJob(jobId, data) {
+      const price = Number(data.price || 0);
+      if (price <= 0 && !confirm("This job is £0. Save it anyway?")) return;
+      const existing = jobs.find(j => j.id === jobId);
+      const dateChanged = existing && existing.dueDate !== data.dueDate;
+      if (demoMode) {
+        const job = existing;
+        if (job) Object.assign(job, {
+          customerId: data.customerId,
+          roundId: data.roundId || "",
+          service: data.service || "Window Clean",
+          frequencyWeeks: Number(data.frequencyWeeks || 0),
+          price,
+          dueDate: data.dueDate,
+          paymentMethod: normalizePaymentMethod(data.paymentMethod),
+          notes: data.notes || "",
+          routeOrder: dateChanged ? null : job.routeOrder
+        });
+        render();
+        return;
+      }
       await updateDoc(doc(db, "jobs", jobId), {
         customerId: data.customerId,
         roundId: data.roundId || "",
         service: data.service || "Window Clean",
         frequencyWeeks: Number(data.frequencyWeeks || 0),
-        price: Number(data.price || 0),
+        price,
         dueDate: data.dueDate,
+        routeOrder: dateChanged ? null : (existing && existing.routeOrder !== undefined ? existing.routeOrder : null),
         paymentMethod: normalizePaymentMethod(data.paymentMethod),
         notes: data.notes || ""
       });
@@ -579,6 +707,16 @@
         const job = jobs.find(j => j.id === jobId);
         if (!job || effectiveStatus(job) === "Paid") return;
 
+        if (demoMode) {
+          job.status = "Paid";
+          job.paid = true;
+          job.paidAt = new Date();
+          renderSubhead();
+          render();
+          refreshOpenCalendarDay();
+          return;
+        }
+
         await updateDoc(doc(db, "jobs", jobId), {
           status: "Paid",
           paid: true,
@@ -589,7 +727,6 @@
         renderSubhead();
         render();
         refreshOpenCalendarDay();
-        openDoneMessage(job);
       } finally {
         pendingActions.delete(actionKey);
       }
@@ -604,6 +741,22 @@
       const job = jobs.find(j => j.id === jobId);
       try {
         if (!job || effectiveStatus(job) !== "Due") return;
+
+        if (demoMode) {
+          job.status = "Unpaid";
+          job.doneAt = new Date();
+          const fw = Number(job.frequencyWeeks || 0);
+          if (fw !== 0) {
+            const nextDue = fw === 52 ? addMonthsISO(job.dueDate || todayISO(), 12) : addDaysISO(job.dueDate || todayISO(), fw * 7);
+            const exists = jobs.some(j => j.completedFromJobId === jobId || (j.customerId === job.customerId && j.service === job.service && j.dueDate === nextDue && effectiveStatus(j) === "Due"));
+            if (!exists) jobs.push({ ...job, id: "demo-next-" + Date.now(), status: "Due", paid: false, dueDate: nextDue, completedFromJobId: jobId, doneAt: null });
+          }
+          renderSubhead();
+          render();
+          refreshOpenCalendarDay();
+          openDoneMessage(job);
+          return;
+        }
 
         await updateDoc(doc(db, "jobs", jobId), {
           status: "Unpaid",
@@ -648,6 +801,7 @@
         renderSubhead();
         render();
         refreshOpenCalendarDay();
+        openDoneMessage(job);
       } finally {
         pendingActions.delete(actionKey);
       }
@@ -666,6 +820,15 @@
       const nextDue = fw === 52
         ? addMonthsISO(job.dueDate || todayISO(), 12)
         : addDaysISO(job.dueDate || todayISO(), fw * 7);
+
+      if (demoMode) {
+        job.dueDate = nextDue;
+        job.skippedAt = new Date();
+        job.status = "Due";
+        render();
+        refreshOpenCalendarDay();
+        return;
+      }
 
       await updateDoc(doc(db, "jobs", jobId), {
         dueDate: nextDue,
@@ -692,8 +855,12 @@
       moved[index] = moved[nextIndex];
       moved[nextIndex] = tmp;
 
-      await Promise.all(moved.map((j, i) => updateDoc(doc(db, "jobs", j.id), { routeOrder: i + 1 })));
-      await loadJobs();
+      if (demoMode) {
+        moved.forEach((j, i) => { j.routeOrder = i + 1; });
+      } else {
+        await Promise.all(moved.map((j, i) => updateDoc(doc(db, "jobs", j.id), { routeOrder: i + 1 })));
+        await loadJobs();
+      }
       render();
       refreshOpenCalendarDay();
     }
@@ -767,12 +934,59 @@
 
       const headers = rows[0].map(cleanHeader);
       const dataRows = rows.slice(1);
-      if (!confirm("Import " + dataRows.length + " CSV rows? This only adds data and will not delete existing customers.")) return;
+      const existingKeys = new Set(customers.map(c => (String(c.name || "").trim().toLowerCase() + "|" + String(c.address || "").trim().toLowerCase() + "|" + String(c.postcode || "").trim().toLowerCase())));
+      const seenKeys = new Set();
+      const validRows = [];
+      const failedRows = [];
+      const zeroPriceRows = [];
+
+      dataRows.forEach((row, index) => {
+        const rowNumber = index + 2;
+        const name = csvValue(row, headers, ["name", "customer", "customer name"]);
+        const address = csvValue(row, headers, ["address", "line1", "street"]);
+        const postcode = csvValue(row, headers, ["postcode", "post code", "zip"]);
+        const price = parseMoney(csvValue(row, headers, ["price", "amount", "charge"]));
+        const dueDate = csvValue(row, headers, ["due date", "duedate", "next clean", "nextclean"]);
+        const key = (name.trim().toLowerCase() + "|" + address.trim().toLowerCase() + "|" + postcode.trim().toLowerCase());
+        const warnings = [];
+
+        if (!name && !address) warnings.push("missing name/address");
+        if (existingKeys.has(key) || seenKeys.has(key)) warnings.push("duplicate customer");
+        if (dueDate && !/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) warnings.push("due date must be YYYY-MM-DD");
+        if (price <= 0 && (dueDate || csvValue(row, headers, ["frequency", "freq"]))) zeroPriceRows.push(rowNumber);
+
+        if (warnings.length) {
+          failedRows.push({ rowNumber, reason: warnings.join(", ") });
+        } else {
+          seenKeys.add(key);
+          validRows.push({ rowNumber, row });
+        }
+      });
+
+      if (zeroPriceRows.length && !confirm("Rows " + zeroPriceRows.join(", ") + " have £0 jobs. Import them anyway?")) {
+        zeroPriceRows.forEach(rowNumber => failedRows.push({ rowNumber, reason: "£0 job not confirmed" }));
+        for (let i = validRows.length - 1; i >= 0; i--) {
+          if (zeroPriceRows.includes(validRows[i].rowNumber)) validRows.splice(i, 1);
+        }
+      }
+
+      if (!validRows.length) {
+        openModal("CSV import results",
+          '<div class="grid gap-3">' +
+            '<div class="p-3 rounded-xl bg-red-50 border border-red-200 text-red-900 text-sm">No rows were imported.</div>' +
+            (failedRows.length ? '<div class="text-sm"><b>Failed rows:</b><br>' + failedRows.map(r => 'Row ' + r.rowNumber + ': ' + escHtml(r.reason)).join("<br>") + '</div>' : "") +
+          '</div>'
+        );
+        return;
+      }
+
+      if (!confirm("Import " + validRows.length + " valid rows? " + failedRows.length + " rows will be skipped. This only adds data and will not delete existing customers.")) return;
 
       let importedCustomers = 0;
       let importedJobs = 0;
 
-      for (const row of dataRows) {
+      for (const item of validRows) {
+        const row = item.row;
         const name = csvValue(row, headers, ["name", "customer", "customer name"]);
         const address = csvValue(row, headers, ["address", "line1", "street"]);
         const postcode = csvValue(row, headers, ["postcode", "post code", "zip"]);
@@ -783,7 +997,7 @@
         const payment = normalizePaymentMethod(csvValue(row, headers, ["payment", "payment method", "how they pay"]) || "Cash");
         const round = rounds.find(r => String(r.name || "").toLowerCase() === roundName.toLowerCase());
 
-        const customerRef = await addDoc(collection(db, "customers"), {
+        const customerPayload = {
           ownerUid: uid,
           active: true,
           name: name || address || "Imported customer",
@@ -796,33 +1010,55 @@
           notes,
           roundId: round ? round.id : "",
           createdAt: serverTimestamp()
-        });
+        };
+
+        let customerRef;
+        if (demoMode) {
+          customerRef = { id: "demo-import-customer-" + Date.now() + "-" + importedCustomers };
+          customers.push({ id: customerRef.id, ...customerPayload, createdAt: new Date() });
+        } else {
+          customerRef = await addDoc(collection(db, "customers"), customerPayload);
+        }
         importedCustomers++;
 
         const dueDate = csvValue(row, headers, ["due date", "duedate", "next clean", "nextclean"]);
         const price = csvValue(row, headers, ["price", "amount", "charge"]);
         if (dueDate || price) {
-          await addDoc(collection(db, "jobs"), {
+          const jobPayload = {
             ownerUid: uid,
             customerId: customerRef.id,
             roundId: round ? round.id : "",
             service: csvValue(row, headers, ["service"]) || "Window Clean",
             frequencyWeeks: frequencyFromText(csvValue(row, headers, ["frequency", "freq"])),
-            price: Number(String(price || "0").replace(/[^0-9.]/g, "")) || 0,
+            price: parseMoney(price),
             dueDate: dueDate || todayISO(),
             paymentMethod: payment,
             notes,
             status: "Due",
             paid: false,
             createdAt: serverTimestamp()
-          });
+          };
+
+          if (demoMode) {
+            jobs.push({ id: "demo-import-job-" + Date.now() + "-" + importedJobs, ...jobPayload, createdAt: new Date() });
+          } else {
+            await addDoc(collection(db, "jobs"), jobPayload);
+          }
           importedJobs++;
         }
       }
 
-      await refreshAll();
+      if (!demoMode) await refreshAll();
+      else render();
       setNotice("Imported " + importedCustomers + " customers and " + importedJobs + " jobs.");
       setTimeout(() => setNotice(""), 4000);
+      openModal("CSV import results",
+        '<div class="grid gap-3">' +
+          '<div class="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-sm">Imported ' + importedCustomers + ' customers and ' + importedJobs + ' jobs.</div>' +
+          '<div class="text-sm"><b>Successful rows:</b> ' + validRows.map(r => r.rowNumber).join(", ") + '</div>' +
+          (failedRows.length ? '<div class="text-sm"><b>Skipped rows:</b><br>' + failedRows.map(r => 'Row ' + r.rowNumber + ': ' + escHtml(r.reason)).join("<br>") + '</div>' : '<div class="text-sm text-slate-600">No failed rows.</div>') +
+        '</div>'
+      );
     }
 
     function messagePayment(job, customer) {
@@ -1024,27 +1260,18 @@
 
       let buttons = "";
 
-      if (job.dueDate && (status === "Due" || status === "Unpaid")) {
-        buttons += '<button data-action="moveUp" data-id="' + job.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Up</button>';
-        buttons += '<button data-action="moveDown" data-id="' + job.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Down</button>';
-      }
-
       if (status === "Due") {
-        buttons += '<button data-action="done" data-id="' + job.id + '" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">Done</button>';
-        buttons += '<button data-action="paid" data-id="' + job.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Paid</button>';
-        buttons += '<button data-action="skip" data-id="' + job.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Skip</button>';
-        buttons += '<button data-action="reschedule" data-id="' + job.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Reschedule</button>';
+        buttons += '<button data-action="done" data-id="' + job.id + '" class="px-3 py-3 rounded-xl bg-slate-900 text-white text-sm font-medium">Done</button>';
+        buttons += '<button data-action="paid" data-id="' + job.id + '" class="px-3 py-3 rounded-xl bg-white border border-slate-200 text-sm font-medium">Paid</button>';
+        buttons += '<button data-action="paymentReminder" data-id="' + job.id + '" class="px-3 py-3 rounded-xl bg-white border border-slate-200 text-sm font-medium">Reminder</button>';
       }
 
       if (status === "Unpaid") {
-        buttons += '<button data-action="paid" data-id="' + job.id + '" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">Paid</button>';
-        buttons += '<button data-action="paymentReminder" data-id="' + job.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Copy reminder</button>';
+        buttons += '<button data-action="paid" data-id="' + job.id + '" class="px-3 py-3 rounded-xl bg-slate-900 text-white text-sm font-medium">Paid</button>';
+        buttons += '<button data-action="paymentReminder" data-id="' + job.id + '" class="px-3 py-3 rounded-xl bg-white border border-slate-200 text-sm font-medium">Reminder</button>';
       }
 
-      buttons += '<button data-action="viewJob" data-id="' + job.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">View</button>';
-      buttons += '<button data-action="editJob" data-id="' + job.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Edit</button>';
-      buttons += '<button data-action="deleteJob" data-id="' + job.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Delete</button>';
-      buttons += '<button data-action="invoice" data-id="' + job.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Invoice</button>';
+      buttons += '<button data-action="viewJob" data-id="' + job.id + '" class="px-3 py-3 rounded-xl bg-white border border-slate-200 text-sm font-medium">More</button>';
 
       return '' +
         '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm mb-3">' +
@@ -1055,7 +1282,7 @@
           '<div class="text-sm text-slate-600 mt-2">' + escHtml(address + (postcode ? ", " + postcode : "")) + '</div>' +
           '<a class="text-sm underline" target="_blank" href="' + mapLink(address, postcode) + '">Open in Maps</a>' +
           (notes ? '<div class="text-sm text-slate-500 mt-2 whitespace-pre-wrap">' + escHtml(notes) + '</div>' : "") +
-          '<div class="mt-3 flex flex-wrap gap-2">' + buttons + '</div>' +
+          '<div class="mt-3 grid grid-cols-2 sm:flex sm:flex-wrap gap-2">' + buttons + '</div>' +
         '</div>';
     }
 
@@ -1374,6 +1601,20 @@
           '</form>' +
         '</div>' +
         '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">' +
+          '<div class="font-semibold text-lg mb-3">Safe testing</div>' +
+          '<div class="grid gap-2">' +
+            '<div class="text-sm text-slate-500">Demo mode uses fake customers for screenshots and does not edit Firebase data.</div>' +
+            '<button id="btnDemoMode" class="px-3 py-2 rounded-xl ' + (demoMode ? "bg-slate-900 text-white" : "bg-white text-slate-900 border border-slate-200") + ' text-sm font-medium shadow">' + (demoMode ? "Exit demo mode" : "Enter demo mode") + '</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">' +
+          '<div class="font-semibold text-lg mb-3">Backup</div>' +
+          '<div class="grid gap-2">' +
+            '<div class="text-sm text-slate-500">RoundMate data is stored in Firebase, not only on this device. Export a JSON backup before importing or giving beta access. Automatic restore is not enabled yet.</div>' +
+            '<button id="btnBackupJSON" class="px-3 py-2 rounded-xl bg-white text-slate-900 text-sm font-medium shadow border border-slate-200">Download JSON backup</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">' +
           '<div class="font-semibold text-lg mb-3">Import customers</div>' +
           '<div class="grid gap-3">' +
             '<input id="csvImportFile" type="file" accept=".csv,text/csv" class="px-3 py-2 rounded-xl border border-slate-200 bg-white" />' +
@@ -1398,6 +1639,8 @@
 
       wireExportButtons();
       $("btnImportCSV").addEventListener("click", () => importCustomersCSV($("csvImportFile").files[0]));
+      $("btnBackupJSON").addEventListener("click", exportBackup);
+      $("btnDemoMode").addEventListener("click", () => setDemoMode(!demoMode));
     }
 
     function renderCalendar() {
@@ -1692,8 +1935,14 @@
       $("fReschedule").addEventListener("submit", async e => {
         e.preventDefault();
         if (!setFormSaving(e.target)) return;
-        await updateDoc(doc(db, "jobs", jobId), { dueDate: new FormData(e.target).get("dueDate") });
-        await loadJobs();
+        const newDate = new FormData(e.target).get("dueDate");
+        if (demoMode) {
+          j.dueDate = newDate;
+          j.routeOrder = null;
+        } else {
+          await updateDoc(doc(db, "jobs", jobId), { dueDate: newDate, routeOrder: null });
+          await loadJobs();
+        }
         closeModal();
         render();
       });
@@ -1775,6 +2024,9 @@
             '<button data-action="cleanedText" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Copy cleaned today</button>' +
             '<button data-action="paymentReminder" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Copy payment reminder</button>' +
             '<button data-action="reviewText" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Copy review request</button>' +
+            '<button data-action="invoice" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Invoice</button>' +
+            (status === "Due" ? '<button data-action="skip" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Skip</button>' : "") +
+            (status === "Due" ? '<button data-action="reschedule" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Reschedule</button>' : "") +
             '<button data-action="editJob" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Edit</button>' +
             '<button data-action="deleteJob" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Delete job</button>' +
           '</div>' +
@@ -1803,6 +2055,25 @@
       link.href = URL.createObjectURL(blob);
       link.download = filename;
       link.click();
+    }
+
+    function downloadJSON(filename, data) {
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json;charset=utf-8;" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = filename;
+      link.click();
+    }
+
+    function exportBackup() {
+      downloadJSON("roundmate-backup-" + todayISO() + ".json", {
+        exportedAt: new Date().toISOString(),
+        note: "RoundMate backup export. Restore is not automatic yet; keep this file safe before beta testing.",
+        customers,
+        jobs,
+        rounds,
+        companySettings
+      });
     }
 
     function exportCustomers() {
@@ -1875,6 +2146,12 @@
     });
 
     async function boot() {
+      demoMode = localStorage.getItem("roundmateDemoMode") === "1";
+      if (demoMode) {
+        uid = "demo";
+        await refreshAll();
+        return;
+      }
       subhead.textContent = "Signing in…";
       try {
         await signInAnonymously(auth);
