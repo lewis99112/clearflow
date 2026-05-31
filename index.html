@@ -87,7 +87,7 @@
     let customers = [];
     let jobs = [];
     let rounds = [];
-    let companySettings = { stripePaymentLink: "", stripePaymentLinks: {}, goCardlessPaymentLink: "", bacsDetails: "", reviewLink: "" };
+    let companySettings = { stripePaymentLink: "", stripePaymentLinks: {}, goCardlessPaymentLink: "", bacsDetails: "", reviewLink: "", messageTemplates: {} };
     let companySettingsId = "";
     let customerSort = "newest";
     let customerFilter = "active";
@@ -172,6 +172,63 @@
       if (method === "Bank transfer") return "Send BACS details or post a slip.";
       if (method === "Cash") return "Ask for cash payment.";
       return "Check payment method.";
+    }
+
+    const DEFAULT_MESSAGE_TEMPLATES = {
+      cleaned: "Hi, your windows have been cleaned today.\n\nAmount due: {price}\n\n{payment_instructions}\n\nThanks",
+      paymentReminder: "Hi, just a quick reminder your window clean payment of {price} is still outstanding.\n\n{payment_instructions}\n\nThanks",
+      dueTomorrow: "Hi, just a reminder your window clean is due {due_when}.\n\nThanks",
+      review: "Hi, thanks again for using me for your window cleaning. If you're happy with the service, a quick Google review would really help.\n\n{review_link}\n\nThanks",
+      invoice: "Hi,\n\nYour {service} ({date}) is done.\n\nAmount due: {price}\n{address_line}{payment_instructions}\n\nThanks"
+    };
+
+    function cleanCustomerName(customer) {
+      const name = String(customer && customer.name ? customer.name : "").trim();
+      if (!name) return "";
+      const lower = name.toLowerCase();
+      if (lower === "unknown" || lower === "unknown customer" || lower === "unnamed") return "";
+      return name;
+    }
+
+    function paymentInstructions(job) {
+      const method = normalizePaymentMethod(job && job.paymentMethod);
+      const link = paymentLinkFor(job);
+      if (method === "Stripe" && link) return "Payment link: " + link;
+      if (method === "GoCardless") return "This will be requested/collected by GoCardless.";
+      if (method === "Bank transfer" && companySettings.bacsDetails) return "Bank details:\n" + companySettings.bacsDetails;
+      if (method === "Cash") return "Please leave cash or pay when convenient.";
+      return "";
+    }
+
+    function messageTemplate(key) {
+      const templates = companySettings.messageTemplates || {};
+      return templates[key] || DEFAULT_MESSAGE_TEMPLATES[key] || "";
+    }
+
+    function renderMessageTemplate(key, job, customer) {
+      const tomorrow = addDaysISO(todayISO(), 1);
+      const dueWhen = job && job.dueDate === tomorrow ? "tomorrow" : "on " + formatDate(job && job.dueDate);
+      const addressParts = [];
+      if (customer && customer.address) addressParts.push(customer.address);
+      if (customer && customer.postcode) addressParts.push(customer.postcode);
+      const address = addressParts.join(", ");
+      const values = {
+        name: cleanCustomerName(customer),
+        price: pounds(job && job.price ? job.price : 0),
+        date: job && job.dueDate ? formatDate(job.dueDate) : "",
+        due_when: dueWhen,
+        service: job && job.service ? job.service : "Window Clean",
+        payment_link: paymentLinkFor(job),
+        payment_instructions: paymentInstructions(job),
+        bacs_details: companySettings.bacsDetails || "",
+        review_link: companySettings.reviewLink || "",
+        address: address,
+        address_line: address ? "Address: " + address + "\n" : ""
+      };
+
+      return messageTemplate(key).replace(/\{([a-z_]+)\}/g, function(match, name) {
+        return values[name] !== undefined ? values[name] : "";
+      }).replace(/\n{3,}/g, "\n\n").trim();
     }
 
     function freqLabel(f) {
@@ -456,7 +513,7 @@
     }
 
     async function loadCompanySettings() {
-      companySettings = { stripePaymentLink: "", stripePaymentLinks: {}, goCardlessPaymentLink: "", bacsDetails: "", reviewLink: "" };
+      companySettings = { stripePaymentLink: "", stripePaymentLinks: {}, goCardlessPaymentLink: "", bacsDetails: "", reviewLink: "", messageTemplates: {} };
       companySettingsId = "";
       const snap = await getDocs(query(collection(db, "companySettings"), where("ownerUid", "==", uid)));
       snap.forEach(d => {
@@ -492,7 +549,14 @@
         stripePaymentLinks,
         goCardlessPaymentLink: data.goCardlessPaymentLink || "",
         bacsDetails: data.bacsDetails || "",
-        reviewLink: data.reviewLink || ""
+        reviewLink: data.reviewLink || "",
+        messageTemplates: {
+          cleaned: data.templateCleaned || DEFAULT_MESSAGE_TEMPLATES.cleaned,
+          paymentReminder: data.templatePaymentReminder || DEFAULT_MESSAGE_TEMPLATES.paymentReminder,
+          dueTomorrow: data.templateDueTomorrow || DEFAULT_MESSAGE_TEMPLATES.dueTomorrow,
+          review: data.templateReview || DEFAULT_MESSAGE_TEMPLATES.review,
+          invoice: data.templateInvoice || DEFAULT_MESSAGE_TEMPLATES.invoice
+        }
       };
 
       if (companySettingsId) {
@@ -1062,59 +1126,23 @@
     }
 
     function messagePayment(job, customer) {
-      const link = paymentLinkFor(job);
-      const method = normalizePaymentMethod(job && job.paymentMethod);
-      return "Hi " + (customer && customer.name ? customer.name : "there") +
-        ", just a quick reminder your window clean payment of " +
-        pounds(job && job.price ? job.price : 0) +
-        " is still outstanding." +
-        (link ? "\n\nPayment link: " + link : "") +
-        (!link && method === "Bank transfer" && companySettings.bacsDetails ? "\n\nBank details:\n" + companySettings.bacsDetails : "") +
-        "\n\nThanks, Lewis.";
+      return renderMessageTemplate("paymentReminder", job, customer);
     }
 
     function messageCleaned(job, customer) {
-      const link = paymentLinkFor(job);
-      const method = normalizePaymentMethod(job && job.paymentMethod);
-      return "Hi " + (customer && customer.name ? customer.name : "there") +
-        ", your windows have been cleaned today. Amount due is " +
-        pounds(job && job.price ? job.price : 0) +
-        "." +
-        (method === "GoCardless" ? "\n\nI'll request/collect this by GoCardless." : "") +
-        (method === "Cash" ? "\n\nPlease leave cash or pay when convenient." : "") +
-        (method === "Bank transfer" && companySettings.bacsDetails ? "\n\nBank details:\n" + companySettings.bacsDetails : "") +
-        (link ? "\n\nPayment link: " + link : "") +
-        "\n\nThanks, Lewis.";
+      return renderMessageTemplate("cleaned", job, customer);
     }
 
     function messageReview(customer) {
-      return "Hi " + (customer && customer.name ? customer.name : "there") +
-        ", thanks again for using me for your window cleaning. If you're happy with the service, a quick Google review would really help." +
-        (companySettings.reviewLink ? "\n\n" + companySettings.reviewLink : "") +
-        "\n\nThanks, Lewis.";
+      return renderMessageTemplate("review", null, customer);
     }
 
     function messageTomorrowReminder(job, customer) {
-      const tomorrow = addDaysISO(todayISO(), 1);
-      const when = job && job.dueDate === tomorrow ? "tomorrow" : "on " + formatDate(job && job.dueDate);
-      return "Hi " + (customer && customer.name ? customer.name : "there") +
-        ", just a quick reminder your windows are due to be cleaned " + when + ". Thanks, Lewis.";
+      return renderMessageTemplate("dueTomorrow", job, customer);
     }
 
     function messageInvoice(job, customer) {
-      const parts = [];
-      if (customer && customer.address) parts.push(customer.address);
-      if (customer && customer.postcode) parts.push(customer.postcode);
-      const link = paymentLinkFor(job);
-
-      return "Hi " + (customer && customer.name ? customer.name : "there") + "\n\n" +
-        "Your " + (job && job.service ? job.service : "Window Clean") +
-        " (" + (job && job.dueDate ? formatDate(job.dueDate) : "") + ") is done.\n\n" +
-        "Amount due: " + pounds(job && job.price ? job.price : 0) + "\n" +
-        (parts.length ? "Address: " + parts.join(", ") + "\n" : "") +
-        (link ? "Payment link: " + link + "\n" : "") +
-        (!link && normalizePaymentMethod(job && job.paymentMethod) === "Bank transfer" && companySettings.bacsDetails ? "Bank details:\n" + companySettings.bacsDetails + "\n" : "") +
-        "\nThanks, Lewis";
+      return renderMessageTemplate("invoice", job, customer);
     }
 
     function paymentLinkFor(job) {
@@ -1574,6 +1602,7 @@
 
     function renderSettings() {
       const stripeLinks = companySettings.stripePaymentLinks || {};
+      const templates = companySettings.messageTemplates || {};
       const stripeRows = [];
       for (let amount = 10; amount <= 40; amount++) {
         stripeRows.push(
@@ -1593,6 +1622,14 @@
             '<div class="grid gap-1"><label class="text-sm font-medium">GoCardless payment link</label><input name="goCardlessPaymentLink" value="' + escAttr(companySettings.goCardlessPaymentLink || "") + '" placeholder="https://pay.gocardless.com/..." class="px-3 py-2 rounded-xl border border-slate-200" /></div>' +
             '<div class="grid gap-1"><label class="text-sm font-medium">BACS / bank transfer details</label><textarea name="bacsDetails" rows="3" placeholder="Account name, sort code, account number" class="px-3 py-2 rounded-xl border border-slate-200">' + escHtml(companySettings.bacsDetails || "") + '</textarea></div>' +
             '<div class="grid gap-1"><label class="text-sm font-medium">Review link</label><input name="reviewLink" value="' + escAttr(companySettings.reviewLink || "") + '" placeholder="Google review link" class="px-3 py-2 rounded-xl border border-slate-200" /></div>' +
+            '<div class="border-t border-slate-200 pt-3 grid gap-3">' +
+              '<div><div class="font-semibold">Message templates</div><div class="text-sm text-slate-500">Defaults do not use customer names. Optional placeholders: {name}, {price}, {date}, {due_when}, {service}, {payment_instructions}, {payment_link}, {bacs_details}, {review_link}, {address}.</div></div>' +
+              '<div class="grid gap-1"><label class="text-sm font-medium">Cleaned today</label><textarea name="templateCleaned" rows="5" class="px-3 py-2 rounded-xl border border-slate-200">' + escHtml(templates.cleaned || DEFAULT_MESSAGE_TEMPLATES.cleaned) + '</textarea></div>' +
+              '<div class="grid gap-1"><label class="text-sm font-medium">Payment reminder</label><textarea name="templatePaymentReminder" rows="5" class="px-3 py-2 rounded-xl border border-slate-200">' + escHtml(templates.paymentReminder || DEFAULT_MESSAGE_TEMPLATES.paymentReminder) + '</textarea></div>' +
+              '<div class="grid gap-1"><label class="text-sm font-medium">Due tomorrow / day before</label><textarea name="templateDueTomorrow" rows="4" class="px-3 py-2 rounded-xl border border-slate-200">' + escHtml(templates.dueTomorrow || DEFAULT_MESSAGE_TEMPLATES.dueTomorrow) + '</textarea></div>' +
+              '<div class="grid gap-1"><label class="text-sm font-medium">Review request</label><textarea name="templateReview" rows="5" class="px-3 py-2 rounded-xl border border-slate-200">' + escHtml(templates.review || DEFAULT_MESSAGE_TEMPLATES.review) + '</textarea></div>' +
+              '<div class="grid gap-1"><label class="text-sm font-medium">Invoice / job done</label><textarea name="templateInvoice" rows="6" class="px-3 py-2 rounded-xl border border-slate-200">' + escHtml(templates.invoice || DEFAULT_MESSAGE_TEMPLATES.invoice) + '</textarea></div>' +
+            '</div>' +
             '<div class="border-t border-slate-200 pt-3">' +
               '<div class="font-semibold mb-2">Stripe links by price</div>' +
               '<div class="grid gap-2">' + stripeRows.join("") + '</div>' +
@@ -1980,6 +2017,7 @@
           (c.notes ? '<div class="text-sm"><b>Notes:</b><div class="whitespace-pre-wrap text-slate-600">' + escHtml(c.notes) + '</div></div>' : "") +
           '<div class="flex flex-wrap gap-2">' +
             '<button id="detailEditCustomer" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">Edit</button>' +
+            (next ? '<button id="detailEditNextJob" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Edit next job</button>' : "") +
             '<button id="detailAddJob" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Add job</button>' +
           '</div>' +
         '</div>'
@@ -1989,6 +2027,13 @@
         closeModal();
         openEditCustomer(customerId);
       });
+
+      if (next && $("detailEditNextJob")) {
+        $("detailEditNextJob").addEventListener("click", () => {
+          closeModal();
+          openEditJob(next.id);
+        });
+      }
 
       $("detailAddJob").addEventListener("click", () => {
         closeModal();
