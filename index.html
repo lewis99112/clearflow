@@ -190,9 +190,16 @@
       return name;
     }
 
-    function paymentInstructions(job) {
-      const method = normalizePaymentMethod(job && job.paymentMethod);
-      const link = paymentLinkFor(job);
+    function paymentMethodFor(job, customer) {
+      const jobMethod = normalizePaymentMethod(job && job.paymentMethod);
+      const customerMethod = normalizePaymentMethod(customer && customer.preferredPayment);
+      if ((jobMethod === "Cash" || !jobMethod) && customerMethod && customerMethod !== "Cash") return customerMethod;
+      return jobMethod || customerMethod || "Cash";
+    }
+
+    function paymentInstructions(job, customer) {
+      const method = paymentMethodFor(job, customer);
+      const link = paymentLinkFor(job, customer);
       if (method === "Stripe" && link) return "Payment link: " + link;
       if (method === "GoCardless") return "This will be requested/collected by GoCardless.";
       if (method === "Bank transfer" && companySettings.bacsDetails) return "Bank details:\n" + companySettings.bacsDetails;
@@ -218,16 +225,17 @@
         date: job && job.dueDate ? formatDate(job.dueDate) : "",
         due_when: dueWhen,
         service: job && job.service ? job.service : "Window Clean",
-        payment_link: paymentLinkFor(job),
-        payment_instructions: paymentInstructions(job),
+        payment_link: paymentLinkFor(job, customer),
+        payment_instructions: paymentInstructions(job, customer),
         bacs_details: companySettings.bacsDetails || "",
         review_link: companySettings.reviewLink || "",
         address: address,
         address_line: address ? "Address: " + address + "\n" : ""
       };
 
-      return messageTemplate(key).replace(/\{([a-z_]+)\}/g, function(match, name) {
-        return values[name] !== undefined ? values[name] : "";
+      return messageTemplate(key).replace(/\{([^}]+)\}/g, function(match, name) {
+        const key = String(name || "").trim().toLowerCase().replace(/\s+/g, "_");
+        return values[key] !== undefined ? values[key] : "";
       }).replace(/\n{3,}/g, "\n\n").trim();
     }
 
@@ -1145,8 +1153,8 @@
       return renderMessageTemplate("invoice", job, customer);
     }
 
-    function paymentLinkFor(job) {
-      const method = normalizePaymentMethod(job && job.paymentMethod);
+    function paymentLinkFor(job, customer) {
+      const method = paymentMethodFor(job, customer);
       if (method === "Stripe") {
         const links = companySettings.stripePaymentLinks || {};
         return links[priceKey(job && job.price)] || companySettings.stripePaymentLink || "";
