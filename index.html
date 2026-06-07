@@ -11,36 +11,69 @@
   <link rel="icon" href="roundmate-icon-192.png?v=2" type="image/png" sizes="192x192" />
   <link rel="apple-touch-icon" href="roundmate-apple-touch-icon.png?v=2" sizes="180x180" />
   <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root {
+      --rm-navy: #0f172a;
+      --rm-blue: #0284c7;
+      --rm-ice: #f0f9ff;
+    }
+    body { background: #f8fafc; }
+    button, input, select, textarea { font-size: 16px; }
+    button { min-height: 44px; }
+    input, select, textarea { min-height: 46px; }
+    input:focus, select:focus, textarea:focus {
+      outline: 3px solid rgba(2, 132, 199, .16);
+      border-color: var(--rm-blue) !important;
+    }
+    .rm-focus:focus { outline: 3px solid rgba(2, 132, 199, .18); border-color: var(--rm-blue); }
+    .rm-section-title::after {
+      content: "";
+      display: block;
+      width: 42px;
+      height: 4px;
+      margin-top: 8px;
+      border-radius: 999px;
+      background: var(--rm-blue);
+    }
+    @media (max-width: 639px) {
+      .rm-shell { padding-left: 12px; padding-right: 12px; }
+      .rm-mobile-nav {
+        padding-bottom: max(8px, env(safe-area-inset-bottom));
+      }
+      .rm-mobile-nav .tab { min-width: 0; }
+    }
+  </style>
 </head>
 
 <body class="bg-slate-50 text-slate-900">
-  <div class="max-w-5xl mx-auto p-4 pb-28">
+  <div class="rm-shell max-w-5xl mx-auto p-4 pb-28">
     <div class="flex items-start justify-between gap-3">
       <div>
-        <h1 class="text-2xl font-bold tracking-tight">RoundMate</h1>
+        <h1 class="text-2xl font-bold tracking-tight text-slate-950">RoundMate</h1>
+        <div class="text-xs font-medium text-sky-700 mt-0.5">Your round, sorted.</div>
         <p id="subhead" class="inline-flex mt-1 px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-xs font-medium text-emerald-800">Loading...</p>
       </div>
 
       <div class="flex flex-wrap justify-end gap-2">
-        <button id="btnAccount" class="px-3 py-2 rounded-xl bg-white text-slate-900 text-sm font-medium shadow border border-slate-200">Account</button>
-        <button id="btnAddCustomer" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">+ Customer</button>
-        <button id="btnAddJob" class="px-3 py-2 rounded-xl bg-white text-slate-900 text-sm font-medium shadow border border-slate-200">+ Job</button>
+        <button id="btnAccount" class="hidden sm:inline-flex px-3 py-2 rounded-lg bg-white text-slate-900 text-sm font-medium shadow-sm border border-slate-200">Account</button>
+        <button id="btnAddCustomer" class="px-3 py-2 rounded-lg bg-slate-900 text-white text-sm font-semibold shadow-sm">+ Customer</button>
+        <button id="btnAddJob" class="px-3 py-2 rounded-lg bg-sky-600 text-white text-sm font-semibold shadow-sm">+ Job</button>
       </div>
     </div>
     <div id="authStatus" class="mt-2 text-xs text-slate-500">Checking account...</div>
 
-    <div class="mt-4 flex flex-wrap gap-2">
-      <button data-tab="today" class="tab px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">Today</button>
-      <button data-tab="route" class="tab px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">Route</button>
-      <button data-tab="week" class="tab px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">Week</button>
-      <button data-tab="overdue" class="tab px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">Overdue</button>
-      <button data-tab="unpaid" class="tab px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">Unpaid</button>
-      <button data-tab="calendar" class="tab px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">Calendar</button>
-      <button data-tab="customers" class="tab px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">Customers</button>
-      <button data-tab="rounds" class="tab px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">Rounds</button>
-      <button data-tab="stats" class="tab px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">Stats</button>
-      <button data-tab="settings" class="tab px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">Settings</button>
-      <button data-tab="all" class="tab px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">All</button>
+    <div class="hidden sm:flex mt-4 flex-wrap gap-2">
+      <button data-tab="today" class="tab">Today</button>
+      <button data-tab="route" class="tab">Route</button>
+      <button data-tab="week" class="tab">Week</button>
+      <button data-tab="overdue" class="tab">Overdue</button>
+      <button data-tab="unpaid" class="tab">Unpaid</button>
+      <button data-tab="calendar" class="tab">Calendar</button>
+      <button data-tab="customers" class="tab">Customers</button>
+      <button data-tab="rounds" class="tab">Rounds</button>
+      <button data-tab="stats" class="tab">Stats</button>
+      <button data-tab="settings" class="tab">Settings</button>
+      <button data-tab="all" class="tab">All</button>
     </div>
 
     <div id="notice" class="mt-4 hidden p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-sm"></div>
@@ -49,6 +82,16 @@
     </div>
     <div id="content" class="mt-4"></div>
   </div>
+
+  <nav class="rm-mobile-nav sm:hidden fixed bottom-0 inset-x-0 z-40 bg-white border-t border-slate-200 shadow-[0_-8px_24px_rgba(15,23,42,0.08)] px-2 pt-2">
+    <div class="grid grid-cols-5 gap-1 max-w-lg mx-auto">
+      <button data-tab="today" class="tab">Today</button>
+      <button data-tab="calendar" class="tab">Calendar</button>
+      <button data-tab="customers" class="tab">Customers</button>
+      <button data-tab="rounds" class="tab">Rounds</button>
+      <button data-tab="more" class="tab">More</button>
+    </div>
+  </nav>
 
   <div id="modalWrap" class="hidden fixed inset-0 bg-black/40 p-4 z-50">
     <div class="max-w-2xl mx-auto bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden max-h-[90vh] flex flex-col">
@@ -82,7 +125,7 @@
     };
 
     const SERVICES = ["Window Clean", "Conservatory", "Gutter Clean", "Fascia + Gutters", "Fascia Only"];
-    const FREQS = [0, 4, 8, 12, 52];
+    const FREQS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 101, 102, 103, 106, 112];
     const PAYMENTS = ["Cash", "Bank transfer", "Stripe", "GoCardless"];
     const SOURCES = ["Leaflet", "Facebook", "Google", "Nextdoor", "Referral", "Other"];
 
@@ -164,11 +207,13 @@
       return todayISO(d);
     }
 
-    function addMonthsISO(iso, months) {
+    function addMonthsISO(iso, months, preferredDay) {
       const d = new Date(iso + "T00:00:00");
-      const originalDay = d.getDate();
+      const originalDay = Number(preferredDay) || d.getDate();
+      d.setDate(1);
       d.setMonth(d.getMonth() + months);
-      if (d.getDate() !== originalDay) d.setDate(0);
+      const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+      d.setDate(Math.min(originalDay, lastDay));
       return todayISO(d);
     }
 
@@ -275,8 +320,47 @@
     function freqLabel(f) {
       const n = Number(f);
       if (n === 0) return "One-off";
-      if (n === 52) return "12 months";
+      if (n === 52 || n === 112) return "12 monthly";
+      if (n === 101) return "Monthly";
+      if (n === 102) return "Bi-monthly (every 2 months)";
+      if (n === 103) return "3 monthly";
+      if (n === 106) return "6 monthly";
       return n + " weekly";
+    }
+
+    function frequencyOptionsHtml(selected) {
+      const selectedValue = Number(selected || 0);
+      const current = selectedValue === 52 ? 112 : selectedValue;
+      const option = value => '<option value="' + value + '" ' + (current === Number(value) ? "selected" : "") + '>' + freqLabel(value) + '</option>';
+      return '<optgroup label="Weekly">' +
+          FREQS.filter(value => value >= 1 && value <= 12).map(option).join("") +
+        '</optgroup>' +
+        '<optgroup label="Monthly">' +
+          [101, 102, 103, 106, 112].map(option).join("") +
+        '</optgroup>' +
+        '<optgroup label="Other">' + option(0) + '</optgroup>';
+    }
+
+    function isMonthlyFrequency(frequency) {
+      const n = Number(frequency || 0);
+      return n === 52 || (n >= 101 && n <= 112);
+    }
+
+    function recurrenceDayFor(frequency, dueDate, existingDay) {
+      if (!isMonthlyFrequency(frequency)) return null;
+      if (Number(existingDay) >= 1 && Number(existingDay) <= 31) return Number(existingDay);
+      const parts = String(dueDate || "").split("-");
+      return parts.length === 3 ? Number(parts[2]) : null;
+    }
+
+    function nextDueDate(job) {
+      const frequency = Number(job && job.frequencyWeeks || 0);
+      const dueDate = job && job.dueDate ? job.dueDate : todayISO();
+      const recurrenceDay = recurrenceDayFor(frequency, dueDate, job && job.recurrenceDay);
+      if (frequency === 0) return "";
+      if (frequency === 52 || frequency === 112) return addMonthsISO(dueDate, 12, recurrenceDay);
+      if (frequency >= 101 && frequency <= 111) return addMonthsISO(dueDate, frequency - 100, recurrenceDay);
+      return addDaysISO(dueDate, frequency * 7);
     }
 
     function mapLink(address, postcode) {
@@ -794,6 +878,8 @@
 
     async function createJob(data) {
       const price = Number(data.price || 0);
+      const frequencyWeeks = Number(data.frequencyWeeks || 0);
+      const recurrenceDay = recurrenceDayFor(frequencyWeeks, data.dueDate);
       if (price <= 0 && !confirm("This job is \u00a30. Save it anyway?")) return;
       if (demoMode) {
         jobs.push({
@@ -802,7 +888,8 @@
           customerId: data.customerId,
           roundId: data.roundId || "",
           service: data.service || "Window Clean",
-          frequencyWeeks: Number(data.frequencyWeeks || 0),
+          frequencyWeeks,
+          recurrenceDay,
           price,
           dueDate: data.dueDate,
           paymentMethod: normalizePaymentMethod(data.paymentMethod),
@@ -820,7 +907,8 @@
         customerId: data.customerId,
         roundId: data.roundId || "",
         service: data.service || "Window Clean",
-        frequencyWeeks: Number(data.frequencyWeeks || 0),
+        frequencyWeeks,
+        recurrenceDay,
         price,
         dueDate: data.dueDate,
         paymentMethod: normalizePaymentMethod(data.paymentMethod),
@@ -838,16 +926,23 @@
 
     async function updateJob(jobId, data) {
       const price = Number(data.price || 0);
+      const frequencyWeeks = Number(data.frequencyWeeks || 0);
       if (price <= 0 && !confirm("This job is \u00a30. Save it anyway?")) return;
       const existing = jobs.find(j => j.id === jobId);
       const dateChanged = existing && existing.dueDate !== data.dueDate;
+      const recurrenceDay = recurrenceDayFor(
+        frequencyWeeks,
+        data.dueDate,
+        !dateChanged && existing ? existing.recurrenceDay : null
+      );
       if (demoMode) {
         const job = existing;
         if (job) Object.assign(job, {
           customerId: data.customerId,
           roundId: data.roundId || "",
           service: data.service || "Window Clean",
-          frequencyWeeks: Number(data.frequencyWeeks || 0),
+          frequencyWeeks,
+          recurrenceDay,
           price,
           dueDate: data.dueDate,
           paymentMethod: normalizePaymentMethod(data.paymentMethod),
@@ -861,7 +956,8 @@
         customerId: data.customerId,
         roundId: data.roundId || "",
         service: data.service || "Window Clean",
-        frequencyWeeks: Number(data.frequencyWeeks || 0),
+        frequencyWeeks,
+        recurrenceDay,
         price,
         dueDate: data.dueDate,
         routeOrder: dateChanged ? null : (existing && existing.routeOrder !== undefined ? existing.routeOrder : null),
@@ -968,9 +1064,18 @@
           job.doneAt = new Date();
           const fw = Number(job.frequencyWeeks || 0);
           if (fw !== 0) {
-            const nextDue = fw === 52 ? addMonthsISO(job.dueDate || todayISO(), 12) : addDaysISO(job.dueDate || todayISO(), fw * 7);
+            const nextDue = nextDueDate(job);
             const exists = jobs.some(j => j.completedFromJobId === jobId || (j.customerId === job.customerId && j.service === job.service && j.dueDate === nextDue && effectiveStatus(j) === "Due"));
-            if (!exists) jobs.push({ ...job, id: "demo-next-" + Date.now(), status: "Due", paid: false, dueDate: nextDue, completedFromJobId: jobId, doneAt: null });
+            if (!exists) jobs.push({
+              ...job,
+              id: "demo-next-" + Date.now(),
+              status: "Due",
+              paid: false,
+              dueDate: nextDue,
+              recurrenceDay: recurrenceDayFor(fw, job.dueDate, job.recurrenceDay),
+              completedFromJobId: jobId,
+              doneAt: null
+            });
           }
           renderSubhead();
           render();
@@ -986,9 +1091,7 @@
 
         const fw = Number(job.frequencyWeeks || 0);
         if (fw !== 0) {
-          const nextDue = fw === 52
-            ? addMonthsISO(job.dueDate || todayISO(), 12)
-            : addDaysISO(job.dueDate || todayISO(), fw * 7);
+          const nextDue = nextDueDate(job);
           const existingNext = jobs.find(j =>
             j.id !== job.id &&
             j.customerId === job.customerId &&
@@ -1006,6 +1109,7 @@
               roundId: job.roundId || "",
               service: job.service || "Window Clean",
               frequencyWeeks: fw,
+              recurrenceDay: recurrenceDayFor(fw, job.dueDate, job.recurrenceDay),
               price: Number(job.price || 0),
               dueDate: nextDue,
               paymentMethod: normalizePaymentMethod(job.paymentMethod),
@@ -1038,9 +1142,7 @@
         return;
       }
 
-      const nextDue = fw === 52
-        ? addMonthsISO(job.dueDate || todayISO(), 12)
-        : addDaysISO(job.dueDate || todayISO(), fw * 7);
+      const nextDue = nextDueDate(job);
 
       if (demoMode) {
         job.dueDate = nextDue;
@@ -1135,9 +1237,15 @@
       const text = String(value || "").toLowerCase();
       if (!text) return 4;
       if (text.includes("one")) return 0;
-      if (text.includes("month") || text.includes("year") || text.includes("annual")) return 52;
+      if (text.includes("annual") || text.includes("year") || text.includes("12 month")) return 112;
+      if (text.includes("bi-month") || text.includes("bi monthly") || text.includes("bimonth") || text.includes("2 month")) return 102;
+      if (text.includes("month")) {
+        const monthMatch = text.match(/\d+/);
+        const months = monthMatch ? Math.max(1, Math.min(11, Number(monthMatch[0]))) : 1;
+        return 100 + months;
+      }
       const match = text.match(/\d+/);
-      return match ? Number(match[0]) : 4;
+      return match ? Math.max(1, Math.min(12, Number(match[0]))) : 4;
     }
 
     async function importCustomersCSV(file) {
@@ -1245,14 +1353,17 @@
         const dueDate = csvValue(row, headers, ["due date", "duedate", "next clean", "nextclean"]);
         const price = csvValue(row, headers, ["price", "amount", "charge"]);
         if (dueDate || price) {
+          const frequencyWeeks = frequencyFromText(csvValue(row, headers, ["frequency", "freq"]));
+          const jobDueDate = dueDate || todayISO();
           const jobPayload = {
             ownerUid: uid,
             customerId: customerRef.id,
             roundId: round ? round.id : "",
             service: csvValue(row, headers, ["service"]) || "Window Clean",
-            frequencyWeeks: frequencyFromText(csvValue(row, headers, ["frequency", "freq"])),
+            frequencyWeeks,
+            recurrenceDay: recurrenceDayFor(frequencyWeeks, jobDueDate),
             price: parseMoney(price),
-            dueDate: dueDate || todayISO(),
+            dueDate: jobDueDate,
             paymentMethod: payment,
             notes,
             status: "Due",
@@ -1411,12 +1522,13 @@
     }
 
     function setTabsUI() {
+      const moreTabs = ["more", "route", "week", "overdue", "unpaid", "stats", "settings", "all"];
       document.querySelectorAll(".tab").forEach(b => {
-        const isActive = b.dataset.tab === activeTab;
-        b.className = "tab px-3 py-2 rounded-xl text-sm font-medium border " +
+        const isActive = b.dataset.tab === activeTab || (b.dataset.tab === "more" && moreTabs.includes(activeTab));
+        b.className = "tab px-2 sm:px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold border " +
           (isActive
-            ? "bg-slate-900 text-white border-slate-900 shadow"
-            : "bg-white text-slate-900 border-slate-200");
+            ? "bg-slate-900 text-white border-slate-900 shadow-sm"
+            : "bg-white text-slate-700 border-slate-200");
       });
     }
 
@@ -1459,14 +1571,20 @@
       buttons += '<button data-action="viewJob" data-id="' + job.id + '" class="px-3 py-3 rounded-xl bg-white border border-slate-200 text-sm font-medium">More</button>';
 
       return '' +
-        '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm mb-3">' +
-          '<div class="text-sm text-slate-500">' + escHtml(formatDate(job.dueDate)) + ' - ' + escHtml(status) + statusBadge(status) + roundBadge(r) + '</div>' +
-          '<div class="font-semibold">' + escHtml(c && c.name ? c.name : "Unknown customer") + '</div>' +
-          '<div class="text-sm text-slate-700 mt-1">' + escHtml(job.service || "") + ' - ' + escHtml(freqLabel(job.frequencyWeeks)) + ' - <span class="font-semibold">' + pounds(job.price) + '</span></div>' +
-          '<div class="mt-2 flex items-center gap-2">' + paymentBadge(payment) + '<span class="text-xs text-slate-500">' + escHtml(paymentActionText({ paymentMethod: payment })) + '</span></div>' +
-          '<div class="text-sm text-slate-600 mt-2">' + escHtml(address + (postcode ? ", " + postcode : "")) + '</div>' +
-          '<a class="text-sm underline" target="_blank" href="' + mapLink(address, postcode) + '">Open in Maps</a>' +
-          (notes ? '<div class="text-sm text-slate-500 mt-2 whitespace-pre-wrap">' + escHtml(notes) + '</div>' : "") +
+        '<div class="bg-white border border-slate-200 rounded-lg p-4 shadow-sm mb-3 border-l-4 border-l-sky-500">' +
+          '<div class="flex items-start justify-between gap-3">' +
+            '<div class="min-w-0">' +
+              '<div class="text-lg font-bold leading-tight text-slate-950">' + escHtml(address || (c && c.name ? c.name : "Unknown customer")) + '</div>' +
+              (postcode ? '<div class="text-sm font-medium text-slate-600 mt-1">' + escHtml(postcode) + '</div>' : "") +
+              (c && c.name && c.name !== address ? '<div class="text-sm text-slate-500 mt-1">' + escHtml(c.name) + '</div>' : "") +
+            '</div>' +
+            '<div class="shrink-0 text-xl font-bold text-slate-950">' + pounds(job.price) + '</div>' +
+          '</div>' +
+          '<div class="text-sm text-slate-600 mt-3">' + escHtml(formatDate(job.dueDate)) + ' - ' + escHtml(job.service || "") + ' - ' + escHtml(freqLabel(job.frequencyWeeks)) + '</div>' +
+          '<div class="mt-2 flex flex-wrap items-center gap-2">' + paymentBadge(payment) + statusBadge(status) + roundBadge(r) + '</div>' +
+          '<div class="mt-2 text-sm font-medium text-slate-700">' + escHtml(paymentActionText({ paymentMethod: payment })) + '</div>' +
+          '<a class="inline-flex items-center min-h-11 mt-1 text-sm font-semibold text-sky-700" target="_blank" href="' + mapLink(address, postcode) + '">Open in Maps</a>' +
+          (notes ? '<div class="text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded-lg p-3 mt-2 whitespace-pre-wrap"><b>Access/notes:</b> ' + escHtml(notes) + '</div>' : "") +
           '<div class="mt-3 grid grid-cols-2 sm:flex sm:flex-wrap gap-2">' + buttons + '</div>' +
         '</div>';
     }
@@ -1480,26 +1598,30 @@
       const payment = normalizePaymentMethod(c.preferredPayment || "Cash");
 
       return '' +
-        '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm mb-3 ' + (active ? "" : "opacity-70") + '">' +
+        '<div class="bg-white border border-slate-200 rounded-lg p-4 shadow-sm mb-3 ' + (active ? "" : "opacity-70") + '">' +
           '<div class="flex items-start justify-between gap-3">' +
-            '<div>' +
-              '<div class="font-semibold">' + escHtml(c.name || "Unnamed") + (active ? "" : ' <span class="ml-2 text-xs px-2 py-1 rounded-lg bg-slate-100">Disabled</span>') + roundBadge(r) + '</div>' +
-              '<div class="text-sm text-slate-600">' + escHtml((c.address || "") + (c.postcode ? " " + c.postcode : "")) + '</div>' +
-              '<div class="text-sm text-slate-600">' + escHtml(c.phone || "") + '</div>' +
-              '<div class="mt-2">' + paymentBadge(payment) + '</div>' +
-              '<div class="text-sm text-slate-500 mt-2">Next clean: ' + (next ? escHtml(formatDate(next.dueDate) + " - " + (next.service || "") + " - " + freqLabel(next.frequencyWeeks) + " - " + pounds(next.price)) : "No upcoming job") + '</div>' +
-              '<div class="text-xs text-slate-500 mt-2">' + stats.cleans + ' cleans - Paid ' + pounds(stats.paid) + ' - Unpaid ' + pounds(stats.unpaid) + ' - Since ' + since + '</div>' +
-              (c.notes ? '<div class="text-sm text-slate-500 mt-2 whitespace-pre-wrap">' + escHtml(c.notes) + '</div>' : "") +
+            '<div class="min-w-0">' +
+              '<div class="text-lg font-bold text-slate-950">' + escHtml(c.address || c.name || "Unnamed") + '</div>' +
+              (c.postcode ? '<div class="text-sm font-medium text-slate-600 mt-1">' + escHtml(c.postcode) + '</div>' : "") +
+              (c.name && c.name !== c.address ? '<div class="text-sm text-slate-500 mt-1">' + escHtml(c.name) + '</div>' : "") +
             '</div>' +
-            '<div class="flex flex-col gap-2">' +
-              '<button data-action="viewCustomer" data-id="' + c.id + '" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">View</button>' +
-              '<button data-action="editCustomer" data-id="' + c.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Edit</button>' +
-              (active
-                ? '<button data-action="disableCustomer" data-id="' + c.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Disable</button>'
-                : '<button data-action="enableCustomer" data-id="' + c.id + '" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">Enable</button>'
-              ) +
-            '</div>' +
+            '<div class="shrink-0">' + paymentBadge(payment) + '</div>' +
           '</div>' +
+          '<div class="mt-3 grid grid-cols-2 gap-2 text-sm">' +
+            '<div class="rounded-lg bg-sky-50 border border-sky-100 p-3"><div class="text-xs text-slate-500">Next clean</div><div class="font-semibold mt-1">' + (next ? escHtml(formatDate(next.dueDate)) : "Not scheduled") + '</div><div class="text-xs text-slate-600 mt-1">' + (next ? escHtml(freqLabel(next.frequencyWeeks) + " - " + pounds(next.price)) : "") + '</div></div>' +
+            '<div class="rounded-lg bg-slate-50 border border-slate-200 p-3"><div class="text-xs text-slate-500">History</div><div class="font-semibold mt-1">' + stats.cleans + ' cleans</div><div class="text-xs text-slate-600 mt-1">Unpaid ' + pounds(stats.unpaid) + '</div></div>' +
+          '</div>' +
+          (c.phone ? '<a href="tel:' + escAttr(c.phone) + '" class="inline-flex min-h-11 items-center text-sm font-semibold text-sky-700 mt-2">' + escHtml(c.phone) + '</a>' : "") +
+          (c.notes ? '<div class="text-sm text-slate-600 mt-2 whitespace-pre-wrap">' + escHtml(c.notes) + '</div>' : "") +
+          '<div class="mt-3 grid grid-cols-3 gap-2">' +
+            '<button data-action="viewCustomer" data-id="' + c.id + '" class="px-3 py-2 rounded-lg bg-slate-900 text-white text-sm font-semibold">View</button>' +
+            '<button data-action="editCustomer" data-id="' + c.id + '" class="px-3 py-2 rounded-lg bg-white border border-slate-200 text-sm font-semibold">Edit</button>' +
+            (active
+              ? '<button data-action="disableCustomer" data-id="' + c.id + '" class="px-3 py-2 rounded-lg bg-white border border-slate-200 text-sm font-semibold">Disable</button>'
+              : '<button data-action="enableCustomer" data-id="' + c.id + '" class="px-3 py-2 rounded-lg bg-slate-900 text-white text-sm font-semibold">Enable</button>'
+            ) +
+          '</div>' +
+          '<div class="mt-2 text-xs text-slate-400">Customer since ' + since + (r ? ' - ' + escHtml(r.name) : "") + '</div>' +
         '</div>';
     }
 
@@ -1656,11 +1778,25 @@
     }
 
     function renderJobs(list) {
+      const titles = {
+        today: "Today's jobs",
+        week: "This week's jobs",
+        overdue: "Overdue jobs",
+        unpaid: "Unpaid jobs",
+        all: "All jobs"
+      };
+      const title = titles[activeTab] || "Jobs";
+      const total = list.reduce((sum, job) => sum + Number(job.price || 0), 0);
+      const header =
+        '<div class="flex items-end justify-between gap-3 mb-4">' +
+          '<div><h2 class="rm-section-title text-2xl font-bold text-slate-950">' + title + '</h2></div>' +
+          '<div class="text-right"><div class="text-2xl font-bold text-slate-950">' + list.length + '</div><div class="text-sm text-slate-500">' + pounds(total) + '</div></div>' +
+        '</div>';
       if (!list.length) {
-        content.innerHTML = '<div class="p-4 rounded-2xl bg-white border border-slate-200 text-slate-600">Nothing here.</div>';
+        content.innerHTML = header + '<div class="p-5 rounded-lg bg-white border border-slate-200 text-slate-600">Nothing here.</div>';
         return;
       }
-      content.innerHTML = list.map(jobCard).join("");
+      content.innerHTML = header + list.map(jobCard).join("");
       wireJobButtons();
     }
 
@@ -1721,6 +1857,46 @@
         renderRouteOrder();
       });
       wireJobButtons();
+    }
+
+    function renderMore() {
+      const tools = [
+        ["route", "Route order", "Arrange today or tomorrow"],
+        ["week", "This week", "Upcoming work"],
+        ["overdue", "Overdue", "Jobs that need attention"],
+        ["unpaid", "Unpaid", "Money still owed"],
+        ["stats", "Stats", "Round totals and customers"],
+        ["all", "All jobs", "Full job history"],
+        ["settings", "Settings", "Payments, messages and backup"]
+      ];
+
+      content.innerHTML =
+        '<div class="mb-4">' +
+          '<h2 class="rm-section-title text-2xl font-bold text-slate-950">More</h2>' +
+          '<p class="text-sm text-slate-600 mt-3">The tools you need less often, kept out of the way of today\'s work.</p>' +
+        '</div>' +
+        '<div class="grid grid-cols-2 gap-3">' +
+          tools.map(tool =>
+            '<button data-more-tab="' + tool[0] + '" class="text-left bg-white border border-slate-200 rounded-lg p-4 shadow-sm hover:border-sky-400">' +
+              '<div class="w-10 h-1 rounded-full bg-sky-500 mb-3"></div>' +
+              '<div class="font-bold text-slate-950">' + tool[1] + '</div>' +
+              '<div class="text-sm text-slate-500 mt-1">' + tool[2] + '</div>' +
+            '</button>'
+          ).join("") +
+          '<button id="moreAccount" class="text-left bg-white border border-slate-200 rounded-lg p-4 shadow-sm hover:border-sky-400">' +
+            '<div class="w-10 h-1 rounded-full bg-slate-800 mb-3"></div>' +
+            '<div class="font-bold text-slate-950">Account</div>' +
+            '<div class="text-sm text-slate-500 mt-1">' + escHtml(currentUserLabel()) + '</div>' +
+          '</button>' +
+        '</div>';
+
+      content.querySelectorAll("[data-more-tab]").forEach(button => {
+        button.addEventListener("click", () => {
+          activeTab = button.dataset.moreTab;
+          render();
+        });
+      });
+      $("moreAccount").addEventListener("click", openAccountModal);
     }
 
     function renderStats() {
@@ -1975,6 +2151,7 @@
       renderSubhead();
 
       if (activeTab === "customers") { renderCustomers(); return; }
+      if (activeTab === "more") { renderMore(); return; }
       if (activeTab === "route") { renderRouteOrder(); return; }
       if (activeTab === "rounds") { renderRounds(); return; }
       if (activeTab === "calendar") { renderCalendar(); return; }
@@ -2081,7 +2258,7 @@
           '<div class="grid gap-1"><label class="text-sm font-medium">Customer</label><select name="customerId" class="px-3 py-2 rounded-xl border border-slate-200" required>' + customerOptionsHtml(selectedCustomerId, true) + '</select></div>' +
           '<div class="grid grid-cols-2 gap-3">' +
             '<div class="grid gap-1"><label class="text-sm font-medium">Service</label><select name="service" class="px-3 py-2 rounded-xl border border-slate-200">' + SERVICES.map(s => '<option>' + escHtml(s) + '</option>').join("") + '</select></div>' +
-            '<div class="grid gap-1"><label class="text-sm font-medium">Frequency</label><select name="frequencyWeeks" class="px-3 py-2 rounded-xl border border-slate-200">' + FREQS.map(f => '<option value="' + f + '">' + freqLabel(f) + '</option>').join("") + '</select></div>' +
+            '<div class="grid gap-1"><label class="text-sm font-medium">Frequency</label><select name="frequencyWeeks" class="px-3 py-2 rounded-xl border border-slate-200">' + frequencyOptionsHtml(4) + '</select></div>' +
           '</div>' +
           '<div class="grid gap-1"><label class="text-sm font-medium">Round</label><select name="roundId" class="px-3 py-2 rounded-xl border border-slate-200">' + roundOptionsHtml(defaultRoundId) + '</select><div data-round-hint class="text-xs text-slate-500">No round selected.</div></div>' +
           '<div class="grid grid-cols-2 gap-3">' +
@@ -2113,7 +2290,7 @@
           '<div class="grid gap-1"><label class="text-sm font-medium">Customer</label><select name="customerId" class="px-3 py-2 rounded-xl border border-slate-200" required>' + customerOptionsHtml(j.customerId, false) + '</select></div>' +
           '<div class="grid grid-cols-2 gap-3">' +
             '<div class="grid gap-1"><label class="text-sm font-medium">Service</label><select name="service" class="px-3 py-2 rounded-xl border border-slate-200">' + SERVICES.map(s => '<option ' + (j.service === s ? "selected" : "") + '>' + escHtml(s) + '</option>').join("") + '</select></div>' +
-            '<div class="grid gap-1"><label class="text-sm font-medium">Frequency</label><select name="frequencyWeeks" class="px-3 py-2 rounded-xl border border-slate-200">' + FREQS.map(f => '<option value="' + f + '" ' + (Number(j.frequencyWeeks) === Number(f) ? "selected" : "") + '>' + freqLabel(f) + '</option>').join("") + '</select></div>' +
+            '<div class="grid gap-1"><label class="text-sm font-medium">Frequency</label><select name="frequencyWeeks" class="px-3 py-2 rounded-xl border border-slate-200">' + frequencyOptionsHtml(j.frequencyWeeks) + '</select></div>' +
           '</div>' +
           '<div class="grid gap-1"><label class="text-sm font-medium">Round</label><select name="roundId" class="px-3 py-2 rounded-xl border border-slate-200">' + roundOptionsHtml(j.roundId || "") + '</select><div data-round-hint class="text-xs text-slate-500">No round selected.</div></div>' +
           '<div class="grid grid-cols-2 gap-3">' +
