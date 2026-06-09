@@ -106,13 +106,13 @@
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
     import {
-      getAuth, signInAnonymously, onAuthStateChanged,
+      getAuth, onAuthStateChanged,
       createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut,
-      EmailAuthProvider, linkWithCredential, sendPasswordResetEmail
+      sendPasswordResetEmail
     } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-auth.js";
     import {
       getFirestore, collection, addDoc, getDocs, query, where,
-      updateDoc, doc, deleteDoc, serverTimestamp
+      updateDoc, doc, deleteDoc, serverTimestamp, getDoc, setDoc
     } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
 
     const firebaseConfig = {
@@ -154,25 +154,46 @@
     let activeCalendarDayIso = "";
     let routeDate = todayISO();
     let demoMode = false;
+    let accountProfile = null;
+    let registrationInProgress = false;
     const pendingActions = new Set();
 
     function currentUserLabel() {
       const user = auth.currentUser;
       if (demoMode) return "Demo mode";
       if (!user) return "Not signed in";
-      if (user.isAnonymous) return "Guest account - create an account to keep this data";
+      if (accountProfile && accountProfile.status === "pending") return "Account awaiting approval";
+      if (accountProfile && accountProfile.status === "suspended") return "Account suspended";
+      if (accountProfile && accountProfile.status === "expired") return "Subscription inactive";
       return "Signed in as " + (user.email || "email account");
+    }
+
+    function hasAppAccess() {
+      if (demoMode) return true;
+      const status = accountProfile && accountProfile.status;
+      return status === "active" || status === "trial";
     }
 
     function renderAuthStatus() {
       if (!authStatus) return;
       const user = auth.currentUser;
-      const className = user && !user.isAnonymous
+      const className = user && hasAppAccess()
         ? "text-xs text-emerald-700"
         : "text-xs text-amber-700";
       authStatus.className = className;
       authStatus.textContent = currentUserLabel();
-      $("btnAccount").textContent = user && !user.isAnonymous ? "Account" : "Create login";
+      $("btnAccount").textContent = user ? "Account" : "Sign in";
+    }
+
+    function setAppControlsEnabled(enabled) {
+      $("btnAddCustomer").disabled = !enabled;
+      $("btnAddJob").disabled = !enabled;
+      $("btnAddCustomer").classList.toggle("opacity-40", !enabled);
+      $("btnAddJob").classList.toggle("opacity-40", !enabled);
+      document.querySelectorAll(".tab").forEach(button => {
+        button.disabled = !enabled;
+        button.classList.toggle("opacity-40", !enabled);
+      });
     }
 
     function escHtml(value) {
@@ -464,30 +485,29 @@
 
     function openAccountModal() {
       const user = auth.currentUser;
-      const isEmailUser = user && !user.isAnonymous;
       openModal("RoundMate account",
         '<div class="grid gap-4">' +
-          '<div class="p-3 rounded-xl ' + (isEmailUser ? "bg-emerald-50 border-emerald-200 text-emerald-900" : "bg-amber-50 border-amber-200 text-amber-900") + ' border text-sm">' +
+          '<div class="p-3 rounded-xl ' + (user && hasAppAccess() ? "bg-emerald-50 border-emerald-200 text-emerald-900" : "bg-amber-50 border-amber-200 text-amber-900") + ' border text-sm">' +
             escHtml(currentUserLabel()) +
           '</div>' +
-          (!isEmailUser
+          (!user
             ? '<form id="fCreateAccount" class="grid gap-3">' +
-                '<div class="font-semibold">Create account and keep this data</div>' +
-                '<div class="text-sm text-slate-500">This links your current RoundMate data to your email login. Your existing customers/jobs stay with you.</div>' +
+                '<div class="font-semibold">Create a RoundMate account</div>' +
+                '<div class="text-sm text-slate-500">New accounts require approval before RoundMate can be used.</div>' +
                 '<input name="email" type="email" placeholder="Email" class="px-3 py-2 rounded-xl border border-slate-200" required />' +
-                '<input name="password" type="password" placeholder="Password (6+ characters)" class="px-3 py-2 rounded-xl border border-slate-200" required minlength="6" />' +
-                '<button class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">Create account</button>' +
+                '<input name="password" type="password" placeholder="Password (8+ characters)" class="px-3 py-2 rounded-xl border border-slate-200" required minlength="8" />' +
+                '<button class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">Request account</button>' +
+              '</form>' +
+              '<form id="fSignIn" class="grid gap-3 border-t border-slate-200 pt-4">' +
+                '<div class="font-semibold">Sign in</div>' +
+                '<input name="email" type="email" placeholder="Email" class="px-3 py-2 rounded-xl border border-slate-200" required />' +
+                '<input name="password" type="password" placeholder="Password" class="px-3 py-2 rounded-xl border border-slate-200" required />' +
+                '<button class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium shadow">Sign in</button>' +
               '</form>'
             : "") +
-          '<form id="fSignIn" class="grid gap-3 border-t border-slate-200 pt-4">' +
-            '<div class="font-semibold">Sign in to an existing account</div>' +
-            '<input name="email" type="email" placeholder="Email" class="px-3 py-2 rounded-xl border border-slate-200" required />' +
-            '<input name="password" type="password" placeholder="Password" class="px-3 py-2 rounded-xl border border-slate-200" required />' +
-            '<button class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium shadow">Sign in</button>' +
-          '</form>' +
           '<div class="flex flex-wrap gap-2">' +
             '<button id="btnResetPassword" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Reset password</button>' +
-            (isEmailUser ? '<button id="btnSignOut" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Sign out</button>' : "") +
+            (user ? '<button id="btnSignOut" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Sign out</button>' : "") +
           '</div>' +
           '<div id="accountMsg" class="hidden p-3 rounded-xl bg-slate-50 border border-slate-200 text-sm"></div>' +
         '</div>'
@@ -495,7 +515,8 @@
 
       const createForm = $("fCreateAccount");
       if (createForm) createForm.addEventListener("submit", createAccountFromCurrentUser);
-      $("fSignIn").addEventListener("submit", signInAccount);
+      const signInForm = $("fSignIn");
+      if (signInForm) signInForm.addEventListener("submit", signInAccount);
       $("btnResetPassword").addEventListener("click", resetPasswordFromModal);
       if ($("btnSignOut")) $("btnSignOut").addEventListener("click", signOutAccount);
     }
@@ -512,25 +533,25 @@
       const form = e.target;
       if (!setFormSaving(form, "Creating...")) return;
       const data = Object.fromEntries(new FormData(form).entries());
+      registrationInProgress = true;
       try {
-        const credential = EmailAuthProvider.credential(data.email, data.password);
-        if (auth.currentUser && auth.currentUser.isAnonymous) {
-          await linkWithCredential(auth.currentUser, credential);
-        } else {
-          await createUserWithEmailAndPassword(auth, data.email, data.password);
-        }
+        const credential = await createUserWithEmailAndPassword(auth, data.email, data.password);
+        await createAccountProfile(credential.user, "pending");
+        accountProfile = await loadAccountProfile(credential.user);
         renderAuthStatus();
-        setAccountMessage("Account created. Your current RoundMate data is now linked to this email.", false);
-        await refreshAll();
+        setAccountMessage("Account requested. It must be approved before you can use RoundMate.", false);
+        closeModal();
+        renderAccessScreen();
       } catch (err) {
         setAccountMessage(authErrorMessage(err), true);
         resetFormSaving(form);
+      } finally {
+        registrationInProgress = false;
       }
     }
 
     async function signInAccount(e) {
       e.preventDefault();
-      if (!confirm("Sign in to this account?\n\nIf this device currently has guest data, make a JSON backup first unless you have already created an account from it.")) return;
       const form = e.target;
       if (!setFormSaving(form, "Signing in...")) return;
       const data = Object.fromEntries(new FormData(form).entries());
@@ -555,7 +576,7 @@
     }
 
     async function signOutAccount() {
-      if (!confirm("Sign out? RoundMate will go back to a guest session on this device.")) return;
+      if (!confirm("Sign out of RoundMate?")) return;
       await signOut(auth);
       closeModal();
     }
@@ -564,9 +585,94 @@
       const code = err && err.code ? err.code : "";
       if (code.includes("email-already-in-use")) return "That email already has an account. Use Sign in instead. If your current guest data needs saving, export a JSON backup first.";
       if (code.includes("invalid-credential") || code.includes("wrong-password")) return "Email or password is incorrect.";
-      if (code.includes("weak-password")) return "Password must be at least 6 characters.";
+      if (code.includes("weak-password")) return "Password must be at least 8 characters.";
       if (code.includes("operation-not-allowed")) return "Email/password login is not enabled in Firebase yet.";
       return err && err.message ? err.message : "Account error.";
+    }
+
+    async function loadAccountProfile(user) {
+      if (!user) return null;
+      const snapshot = await getDoc(doc(db, "accountProfiles", user.uid));
+      return snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } : null;
+    }
+
+    async function createAccountProfile(user, status) {
+      if (!user) return;
+      await setDoc(doc(db, "accountProfiles", user.uid), {
+        uid: user.uid,
+        ownerUid: user.uid,
+        email: String(user.email || "").toLowerCase(),
+        status: status || "pending",
+        plan: status === "active" ? "owner" : "tester",
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        legacyMigrated: status === "active"
+      }, { merge: true });
+    }
+
+    async function ensureAccountProfile(user) {
+      let profile = await loadAccountProfile(user);
+      if (profile) return profile;
+
+      const status = registrationInProgress ? "pending" : "active";
+      await createAccountProfile(user, status);
+      profile = await loadAccountProfile(user);
+      return profile;
+    }
+
+    function renderAccessScreen() {
+      setAppControlsEnabled(false);
+      renderAuthStatus();
+      const user = auth.currentUser;
+
+      if (!user) {
+        subhead.textContent = "Sign in required";
+        content.innerHTML =
+          '<div class="max-w-lg mx-auto bg-white border border-slate-200 rounded-lg p-6 shadow-sm">' +
+            '<div class="w-12 h-1 rounded-full bg-sky-500 mb-4"></div>' +
+            '<h2 class="text-2xl font-bold text-slate-950">Sign in to RoundMate</h2>' +
+            '<p class="text-slate-600 mt-2">An approved account is required. New accounts cannot access customer or job data until approved.</p>' +
+            '<button id="accessSignIn" class="w-full mt-5 px-4 py-3 rounded-lg bg-slate-900 text-white font-semibold">Sign in or request an account</button>' +
+          '</div>';
+        $("accessSignIn").addEventListener("click", openAccountModal);
+        return;
+      }
+
+      const status = accountProfile && accountProfile.status ? accountProfile.status : "pending";
+      const heading = status === "pending" ? "Account awaiting approval" :
+        status === "suspended" ? "Account suspended" : "Subscription inactive";
+      const message = status === "pending"
+        ? "Your account has been created, but it must be approved before RoundMate can be used."
+        : status === "suspended"
+          ? "This account has been suspended. Contact RoundMate support if you think this is a mistake."
+          : "This account does not currently have an active RoundMate subscription.";
+
+      subhead.textContent = heading;
+      content.innerHTML =
+        '<div class="max-w-lg mx-auto bg-white border border-slate-200 rounded-lg p-6 shadow-sm">' +
+          '<div class="w-12 h-1 rounded-full bg-amber-500 mb-4"></div>' +
+          '<h2 class="text-2xl font-bold text-slate-950">' + heading + '</h2>' +
+          '<p class="text-slate-600 mt-2">' + message + '</p>' +
+          '<div class="mt-4 rounded-lg bg-slate-50 border border-slate-200 p-3 text-sm">' +
+            '<div><b>Email:</b> ' + escHtml(user.email || "") + '</div>' +
+            '<div class="mt-1 break-all"><b>Support ID:</b> ' + escHtml(user.uid) + '</div>' +
+          '</div>' +
+          '<div class="mt-4 grid grid-cols-2 gap-2">' +
+            '<button id="checkApproval" class="px-3 py-3 rounded-lg bg-sky-600 text-white font-semibold">Check again</button>' +
+            '<button id="accessSignOut" class="px-3 py-3 rounded-lg bg-white border border-slate-200 font-semibold">Sign out</button>' +
+          '</div>' +
+        '</div>';
+
+      $("checkApproval").addEventListener("click", async () => {
+        accountProfile = await loadAccountProfile(auth.currentUser);
+        if (hasAppAccess()) {
+          setAppControlsEnabled(true);
+          await refreshAll();
+        } else {
+          renderAccessScreen();
+        }
+      });
+      $("accessSignOut").addEventListener("click", signOutAccount);
     }
 
     function getCustomerById(id) {
@@ -761,6 +867,10 @@
         loadDemoData();
         renderSubhead();
         render();
+        return;
+      }
+      if (!auth.currentUser || !hasAppAccess()) {
+        renderAccessScreen();
         return;
       }
       await Promise.all([loadCustomers(), loadJobs(), loadRounds(), loadCompanySettings()]);
@@ -2569,19 +2679,34 @@
     onAuthStateChanged(auth, async user => {
       if (demoMode) return;
       if (!user) {
+        uid = null;
+        accountProfile = null;
+        customers = [];
+        jobs = [];
+        rounds = [];
         renderAuthStatus();
-        subhead.textContent = "Starting guest session...";
-        try {
-          await signInAnonymously(auth);
-        } catch (e) {
-          subhead.textContent = "Auth error. Enable Anonymous Auth in Firebase.";
-          console.error(e);
-        }
+        renderAccessScreen();
+        return;
+      }
+      if (user.isAnonymous) {
+        await signOut(auth);
         return;
       }
       uid = user.uid;
-      renderAuthStatus();
-      await refreshAll();
+      try {
+        accountProfile = await ensureAccountProfile(user);
+        renderAuthStatus();
+        if (hasAppAccess()) {
+          setAppControlsEnabled(true);
+          await refreshAll();
+        } else {
+          renderAccessScreen();
+        }
+      } catch (error) {
+        console.error(error);
+        subhead.textContent = "Account access error";
+        content.innerHTML = '<div class="p-4 rounded-lg bg-red-50 border border-red-200 text-red-900">RoundMate could not check this account. Contact support and provide user ID: ' + escHtml(user.uid) + '</div>';
+      }
     });
 
     async function boot() {
@@ -2594,6 +2719,7 @@
       }
       subhead.textContent = "Checking account...";
       renderAuthStatus();
+      setAppControlsEnabled(false);
     }
 
     boot();
