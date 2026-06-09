@@ -108,11 +108,11 @@
     import {
       getAuth, onAuthStateChanged,
       createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut,
-      sendPasswordResetEmail
+      sendPasswordResetEmail, setPersistence, browserLocalPersistence
     } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-auth.js";
     import {
       getFirestore, collection, addDoc, getDocs, query, where,
-      updateDoc, doc, deleteDoc, serverTimestamp, getDoc, setDoc
+      updateDoc, doc, deleteDoc, serverTimestamp, getDoc, setDoc, writeBatch
     } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
 
     const firebaseConfig = {
@@ -156,6 +156,8 @@
     let demoMode = false;
     let accountProfile = null;
     let registrationInProgress = false;
+    let authFlowPromise = null;
+    let authFlowUid = "";
     const pendingActions = new Set();
 
     function currentUserLabel() {
@@ -536,10 +538,7 @@
       registrationInProgress = true;
       try {
         const credential = await createUserWithEmailAndPassword(auth, data.email, data.password);
-        await createAccountProfile(credential.user, "pending");
-        accountProfile = await loadAccountProfile(credential.user);
-        renderAuthStatus();
-        setAccountMessage("Account requested. It must be approved before you can use RoundMate.", false);
+        await handleAuthenticatedUser(credential.user);
         closeModal();
         renderAccessScreen();
       } catch (err) {
@@ -556,7 +555,8 @@
       if (!setFormSaving(form, "Signing in...")) return;
       const data = Object.fromEntries(new FormData(form).entries());
       try {
-        await signInWithEmailAndPassword(auth, data.email, data.password);
+        const credential = await signInWithEmailAndPassword(auth, data.email, data.password);
+        await handleAuthenticatedUser(credential.user);
         closeModal();
       } catch (err) {
         setAccountMessage(authErrorMessage(err), true);
@@ -620,6 +620,31 @@
       return profile;
     }
 
+    async function handleAuthenticatedUser(user) {
+      if (!user) return;
+      if (authFlowPromise && authFlowUid === user.uid) return authFlowPromise;
+
+      authFlowUid = user.uid;
+      authFlowPromise = (async () => {
+        uid = user.uid;
+        accountProfile = await ensureAccountProfile(user);
+        renderAuthStatus();
+        if (hasAppAccess()) {
+          setAppControlsEnabled(true);
+          await refreshAll();
+        } else {
+          renderAccessScreen();
+        }
+      })();
+
+      try {
+        await authFlowPromise;
+      } finally {
+        authFlowPromise = null;
+        authFlowUid = "";
+      }
+    }
+
     function renderAccessScreen() {
       setAppControlsEnabled(false);
       renderAuthStatus();
@@ -632,6 +657,7 @@
             '<div class="w-12 h-1 rounded-full bg-sky-500 mb-4"></div>' +
             '<h2 class="text-2xl font-bold text-slate-950">Sign in to RoundMate</h2>' +
             '<p class="text-slate-600 mt-2">An approved account is required. New accounts cannot access customer or job data until approved.</p>' +
+            '<p class="text-sm text-slate-500 mt-2">On iPhone or iPad, sign in once from the home-screen app after installing it.</p>' +
             '<button id="accessSignIn" class="w-full mt-5 px-4 py-3 rounded-lg bg-slate-900 text-white font-semibold">Sign in or request an account</button>' +
           '</div>';
         $("accessSignIn").addEventListener("click", openAccountModal);
@@ -942,7 +968,7 @@
     }
 
     async function createCustomer(data) {
-      await addDoc(collection(db, "customers"), {
+      const payload = {
         ownerUid: uid,
         active: true,
         name: data.name || "",
@@ -955,9 +981,14 @@
         notes: data.notes || "",
         roundId: data.roundId || "",
         createdAt: serverTimestamp()
-      });
+      };
+      const created = await addDoc(collection(db, "customers"), payload);
 
-      await loadCustomers();
+      customers.unshift({
+        ...payload,
+        id: created.id,
+        createdAt: new Date()
+      });
       activeTab = "customers";
       render();
     }
@@ -1012,7 +1043,7 @@
         render();
         return;
       }
-      await addDoc(collection(db, "jobs"), {
+      const payload = {
         ownerUid: uid,
         customerId: data.customerId,
         roundId: data.roundId || "",
@@ -1026,9 +1057,14 @@
         status: "Due",
         paid: false,
         createdAt: serverTimestamp()
-      });
+      };
+      const created = await addDoc(collection(db, "jobs"), payload);
 
-      await loadJobs();
+      jobs.push({
+        ...payload,
+        id: created.id,
+        createdAt: new Date()
+      });
       activeTab = "today";
       renderSubhead();
       render();
@@ -1150,10 +1186,16 @@
           paidAt: serverTimestamp()
         });
 
-        await loadJobs();
+        job.status = "Paid";
+        job.paid = true;
+        job.paidAt = new Date();
         renderSubhead();
         render();
         refreshOpenCalendarDay();
+      } catch (error) {
+        console.error(error);
+        setNotice("Could not mark this job paid. Check your connection and try again.");
+        render();
       } finally {
         pendingActions.delete(actionKey);
       }
@@ -1194,26 +1236,28 @@
           return;
         }
 
-        await updateDoc(doc(db, "jobs", jobId), {
+        const fw = Number(job.frequencyWeeks || 0);
+        const nextDue = fw !== 0 ? nextDueDate(job) : "";
+        const existingNext = fw !== 0 ? jobs.find(j =>
+          j.id !== job.id &&
+          j.customerId === job.customerId &&
+          j.service === job.service &&
+          Number(j.frequencyWeeks || 0) === fw &&
+          j.dueDate === nextDue &&
+          effectiveStatus(j) === "Due" &&
+          (j.completedFromJobId === jobId || !j.completedFromJobId)
+        ) : null;
+        const batch = writeBatch(db);
+        batch.update(doc(db, "jobs", jobId), {
           status: "Unpaid",
           doneAt: serverTimestamp()
         });
 
-        const fw = Number(job.frequencyWeeks || 0);
+        let nextJob = null;
         if (fw !== 0) {
-          const nextDue = nextDueDate(job);
-          const existingNext = jobs.find(j =>
-            j.id !== job.id &&
-            j.customerId === job.customerId &&
-            j.service === job.service &&
-            Number(j.frequencyWeeks || 0) === fw &&
-            j.dueDate === nextDue &&
-            effectiveStatus(j) === "Due" &&
-            (j.completedFromJobId === jobId || !j.completedFromJobId)
-          );
-
           if (!existingNext) {
-            await addDoc(collection(db, "jobs"), {
+            const nextJobId = "next_" + jobId;
+            nextJob = {
               ownerUid: uid,
               customerId: job.customerId,
               roundId: job.roundId || "",
@@ -1228,15 +1272,25 @@
               paid: false,
               completedFromJobId: jobId,
               createdAt: serverTimestamp()
-            });
+            };
+            batch.set(doc(db, "jobs", nextJobId), nextJob, { merge: true });
+            nextJob = { ...nextJob, id: nextJobId, createdAt: new Date() };
           }
         }
 
-        await loadJobs();
+        await batch.commit();
+        job.status = "Unpaid";
+        job.paid = false;
+        job.doneAt = new Date();
+        if (nextJob && !jobs.some(item => item.id === nextJob.id)) jobs.push(nextJob);
         renderSubhead();
         render();
         refreshOpenCalendarDay();
         openDoneMessage(job);
+      } catch (error) {
+        console.error(error);
+        setNotice("Could not mark this job done. Check your connection and try again.");
+        render();
       } finally {
         pendingActions.delete(actionKey);
       }
@@ -2308,9 +2362,16 @@
 
       $("fCustomer").addEventListener("submit", async e => {
         e.preventDefault();
-        if (!setFormSaving(e.target)) return;
-        await createCustomer(Object.fromEntries(new FormData(e.target).entries()));
-        closeModal();
+        const form = e.target;
+        if (!setFormSaving(form)) return;
+        try {
+          await createCustomer(Object.fromEntries(new FormData(form).entries()));
+          closeModal();
+        } catch (error) {
+          console.error(error);
+          setNotice("Customer could not be saved. Check your connection and try again.");
+          resetFormSaving(form);
+        }
       });
     }
 
@@ -2385,9 +2446,16 @@
 
       $("fJob").addEventListener("submit", async e => {
         e.preventDefault();
-        if (!setFormSaving(e.target)) return;
-        await createJob(Object.fromEntries(new FormData(e.target).entries()));
-        closeModal();
+        const form = e.target;
+        if (!setFormSaving(form)) return;
+        try {
+          await createJob(Object.fromEntries(new FormData(form).entries()));
+          closeModal();
+        } catch (error) {
+          console.error(error);
+          setNotice("Job could not be saved. Check your connection and try again.");
+          resetFormSaving(form);
+        }
       });
     }
 
@@ -2676,7 +2744,7 @@
     $("btnAddJob").addEventListener("click", () => openAddJob());
     $("btnAccount").addEventListener("click", openAccountModal);
 
-    onAuthStateChanged(auth, async user => {
+    async function handleAuthStateChange(user) {
       if (demoMode) return;
       if (!user) {
         uid = null;
@@ -2692,22 +2760,14 @@
         await signOut(auth);
         return;
       }
-      uid = user.uid;
       try {
-        accountProfile = await ensureAccountProfile(user);
-        renderAuthStatus();
-        if (hasAppAccess()) {
-          setAppControlsEnabled(true);
-          await refreshAll();
-        } else {
-          renderAccessScreen();
-        }
+        await handleAuthenticatedUser(user);
       } catch (error) {
         console.error(error);
         subhead.textContent = "Account access error";
         content.innerHTML = '<div class="p-4 rounded-lg bg-red-50 border border-red-200 text-red-900">RoundMate could not check this account. Contact support and provide user ID: ' + escHtml(user.uid) + '</div>';
       }
-    });
+    }
 
     async function boot() {
       demoMode = localStorage.getItem("roundmateDemoMode") === "1";
@@ -2720,6 +2780,12 @@
       subhead.textContent = "Checking account...";
       renderAuthStatus();
       setAppControlsEnabled(false);
+      try {
+        await setPersistence(auth, browserLocalPersistence);
+      } catch (error) {
+        console.warn("Could not set persistent login storage.", error);
+      }
+      onAuthStateChanged(auth, handleAuthStateChange);
     }
 
     boot();
