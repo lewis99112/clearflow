@@ -1414,7 +1414,7 @@
     const CSV_IMPORT_FIELDS = [
       { key: "", label: "Ignore this column", aliases: [] },
       { key: "name", label: "Customer name", aliases: ["name", "customer", "customername", "client", "clientname"] },
-      { key: "address", label: "Address", aliases: ["address", "adress", "address1", "line1", "street", "property"] },
+      { key: "address", label: "Address", aliases: ["address", "adress", "address1", "address2", "addressline1", "addressline2", "line1", "line2", "street", "property"] },
       { key: "postcode", label: "Postcode", aliases: ["postcode", "postalcode", "zipcode", "zip"] },
       { key: "phone", label: "Phone", aliases: ["phone", "mobile", "telephone", "tel", "phonenumber"] },
       { key: "email", label: "Email", aliases: ["email", "emailaddress"] },
@@ -1442,6 +1442,44 @@
       return "";
     }
 
+    function csvImportIdentity(record) {
+      const address = String(record && record.address || "").trim().toLowerCase().replace(/\s+/g, " ");
+      const postcode = String(record && record.postcode || "").trim().toLowerCase().replace(/\s+/g, "");
+      const email = String(record && record.email || "").trim().toLowerCase();
+      const phone = String(record && record.phone || "").replace(/\D/g, "");
+      const name = String(record && record.name || "").trim().toLowerCase().replace(/\s+/g, " ");
+      const genericNames = new Set(["", "name", "unknown", "unknown customer", "unnamed", "customer", "n/a", "na"]);
+
+      if (address || postcode) return "address|" + address + "|" + postcode;
+      if (email) return "email|" + email;
+      if (phone) return "phone|" + phone;
+      if (!genericNames.has(name) && (email || phone)) return "person|" + name + "|" + email + "|" + phone;
+      return "";
+    }
+
+    function validateCSVMapping(rawHeaders, mapping) {
+      const issues = [];
+      const usedFields = mapping.filter(Boolean);
+      const duplicateFields = [...new Set(usedFields.filter((field, index) =>
+        field !== "address" && field !== "notes" && usedFields.indexOf(field) !== index
+      ))];
+      if (duplicateFields.length) {
+        issues.push("Each spreadsheet column type can only be selected once: " + duplicateFields.join(", "));
+      }
+
+      rawHeaders.forEach((header, index) => {
+        const obviousField = guessCSVField(header);
+        if ((obviousField === "name" || obviousField === "address") && mapping[index] !== obviousField) {
+          issues.push('Column "' + header + '" should be mapped to ' + (obviousField === "name" ? "Customer name" : "Address") + ".");
+        }
+      });
+
+      if (!mapping.includes("name") && !mapping.includes("address")) {
+        issues.push("Map at least a Customer name or Address column.");
+      }
+      return issues;
+    }
+
     function csvMappingOptions(selected) {
       return CSV_IMPORT_FIELDS.map(field =>
         '<option value="' + field.key + '" ' + (field.key === selected ? "selected" : "") + '>' + escHtml(field.label) + '</option>'
@@ -1449,13 +1487,16 @@
     }
 
     function mappedCSVValue(row, mapping, fieldKey) {
+      const values = [];
       for (let index = 0; index < mapping.length; index++) {
         if (mapping[index] === fieldKey) {
           const value = String(row[index] || "").trim();
-          if (value) return value;
+          if (value) values.push(value);
         }
       }
-      return "";
+      if (fieldKey === "address") return values.join(", ");
+      if (fieldKey === "notes") return values.join(" | ");
+      return values[0] || "";
     }
 
     function normalizeImportDate(value) {
@@ -1525,11 +1566,7 @@
     }
 
     function prepareMappedImport(dataRows, mapping, calculateNextClean) {
-      const existingKeys = new Set(customers.map(c =>
-        String(c.name || "").trim().toLowerCase() + "|" +
-        String(c.address || "").trim().toLowerCase() + "|" +
-        String(c.postcode || "").trim().toLowerCase()
-      ));
+      const existingKeys = new Set(customers.map(csvImportIdentity).filter(Boolean));
       const seenKeys = new Set();
       const validRows = [];
       const failedRows = [];
@@ -1550,14 +1587,11 @@
         }
 
         const price = parseMoney(record.price);
-        const key =
-          String(record.name || "").trim().toLowerCase() + "|" +
-          String(record.address || "").trim().toLowerCase() + "|" +
-          String(record.postcode || "").trim().toLowerCase();
+        const key = csvImportIdentity(record);
         const errors = [];
 
         if (!record.name && !record.address) errors.push("missing name/address");
-        if (existingKeys.has(key) || seenKeys.has(key)) errors.push("duplicate customer");
+        if (key && (existingKeys.has(key) || seenKeys.has(key))) errors.push("duplicate customer");
         if (record.customerSince && customerSinceResult.error) errors.push(customerSinceResult.error);
         if (record.dueDate && dueDateResult.error) errors.push(dueDateResult.error);
 
@@ -1566,7 +1600,7 @@
           return;
         }
 
-        seenKeys.add(key);
+        if (key) seenKeys.add(key);
         validRows.push({
           rowNumber,
           name: record.name || record.address || "Imported customer",
@@ -1789,6 +1823,7 @@
             ).join("") +
           '</div>' +
           '<label class="flex items-start gap-2 p-3 rounded-lg bg-slate-50 border border-slate-200 text-sm"><input id="calculateNextClean" type="checkbox" class="mt-1"> <span>If there is no Next clean column, calculate the next date from Customer since + Frequency.</span></label>' +
+          '<div id="csvMappingError" class="hidden p-3 rounded-lg bg-red-50 border border-red-200 text-red-900 text-sm"></div>' +
           '<button id="previewMappedCSV" class="px-3 py-3 rounded-lg bg-slate-900 text-white font-semibold">Preview import</button>' +
         '</div>'
       );
@@ -1798,8 +1833,15 @@
           const select = document.querySelector('[data-csv-column="' + index + '"]');
           return select ? select.value : "";
         });
+        const issues = validateCSVMapping(rawHeaders, selectedMapping);
+        if (issues.length) {
+          const errorBox = $("csvMappingError");
+          errorBox.innerHTML = '<b>Check the column matching:</b><br>' + issues.map(escHtml).join("<br>");
+          errorBox.classList.remove("hidden");
+          return;
+        }
         const signature = rawHeaders.map(cleanHeader).join("|");
-        localStorage.setItem("roundmateCsvMapping:" + signature, JSON.stringify(selectedMapping));
+        localStorage.setItem("roundmateCsvMapping:v2:" + signature, JSON.stringify(selectedMapping));
         openCSVPreview(rawHeaders, dataRows, selectedMapping, $("calculateNextClean").checked);
       });
     }
@@ -1822,7 +1864,7 @@
       const signature = rawHeaders.map(cleanHeader).join("|");
       let savedMapping = null;
       try {
-        savedMapping = JSON.parse(localStorage.getItem("roundmateCsvMapping:" + signature) || "null");
+        savedMapping = JSON.parse(localStorage.getItem("roundmateCsvMapping:v2:" + signature) || "null");
       } catch (error) {
         savedMapping = null;
       }
