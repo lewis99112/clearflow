@@ -224,6 +224,12 @@
       return parts[2] + "/" + parts[1] + "/" + parts[0];
     }
 
+    function customerSinceLabel(customer) {
+      if (customer && customer.customerSince) return formatDate(customer.customerSince);
+      if (customer && isTimestamp(customer.createdAt)) return formatDate(todayISO(customer.createdAt.toDate()));
+      return "-";
+    }
+
     function addDaysISO(iso, days) {
       const d = new Date(iso + "T00:00:00");
       d.setDate(d.getDate() + days);
@@ -1352,11 +1358,27 @@
       refreshOpenCalendarDay();
     }
 
+    function detectCSVDelimiter(text) {
+      const firstLine = String(text || "").split(/\r?\n/).find(line => line.trim()) || "";
+      const candidates = [",", ";", "\t"];
+      let best = ",";
+      let bestCount = -1;
+      candidates.forEach(candidate => {
+        const count = firstLine.split(candidate).length - 1;
+        if (count > bestCount) {
+          best = candidate;
+          bestCount = count;
+        }
+      });
+      return best;
+    }
+
     function parseCSV(text) {
       const rows = [];
       let row = [];
       let value = "";
       let quoted = false;
+      const delimiter = detectCSVDelimiter(text);
 
       for (let i = 0; i < text.length; i++) {
         const ch = text[i];
@@ -1366,7 +1388,7 @@
           i++;
         } else if (ch === '"') {
           quoted = !quoted;
-        } else if (ch === "," && !quoted) {
+        } else if (ch === delimiter && !quoted) {
           row.push(value);
           value = "";
         } else if ((ch === "\n" || ch === "\r") && !quoted) {
@@ -1389,12 +1411,94 @@
       return String(value || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
     }
 
-    function csvValue(row, headers, names) {
-      for (const name of names) {
-        const index = headers.indexOf(cleanHeader(name));
-        if (index >= 0) return String(row[index] || "").trim();
+    const CSV_IMPORT_FIELDS = [
+      { key: "", label: "Ignore this column", aliases: [] },
+      { key: "name", label: "Customer name", aliases: ["name", "customer", "customername", "client", "clientname"] },
+      { key: "address", label: "Address", aliases: ["address", "adress", "address1", "line1", "street", "property"] },
+      { key: "postcode", label: "Postcode", aliases: ["postcode", "postalcode", "zipcode", "zip"] },
+      { key: "phone", label: "Phone", aliases: ["phone", "mobile", "telephone", "tel", "phonenumber"] },
+      { key: "email", label: "Email", aliases: ["email", "emailaddress"] },
+      { key: "round", label: "Round / area", aliases: ["round", "roundname", "area", "route", "location"] },
+      { key: "frequency", label: "Frequency", aliases: ["frequency", "frequ", "freq", "weeks", "cycle", "repeat"] },
+      { key: "price", label: "Price", aliases: ["price", "amount", "charge", "cost", "value", "cleanprice"] },
+      { key: "dueDate", label: "Next clean date", aliases: ["duedate", "nextclean", "nextcleandate", "nextdate", "scheduledate"] },
+      { key: "customerSince", label: "Customer since / start date", aliases: ["startdate", "customersince", "joined", "joindate", "dateadded"] },
+      { key: "payment", label: "Payment method", aliases: ["payment", "paymentmethod", "howtheypay", "paymethod"] },
+      { key: "service", label: "Service", aliases: ["service", "job", "jobtype", "worktype"] },
+      { key: "source", label: "Source", aliases: ["source", "leadsource", "foundus", "howfound"] },
+      { key: "status", label: "Customer status", aliases: ["status", "active", "customerstatus"] },
+      { key: "notes", label: "Notes", aliases: ["notes", "note", "access", "accessnotes", "instructions"] }
+    ];
+
+    function guessCSVField(header) {
+      const cleaned = cleanHeader(header);
+      if (!cleaned) return "";
+      for (const field of CSV_IMPORT_FIELDS) {
+        if (field.aliases.includes(cleaned)) return field.key;
+      }
+      for (const field of CSV_IMPORT_FIELDS) {
+        if (field.aliases.some(alias => cleaned.startsWith(alias) || alias.startsWith(cleaned))) return field.key;
       }
       return "";
+    }
+
+    function csvMappingOptions(selected) {
+      return CSV_IMPORT_FIELDS.map(field =>
+        '<option value="' + field.key + '" ' + (field.key === selected ? "selected" : "") + '>' + escHtml(field.label) + '</option>'
+      ).join("");
+    }
+
+    function mappedCSVValue(row, mapping, fieldKey) {
+      for (let index = 0; index < mapping.length; index++) {
+        if (mapping[index] === fieldKey) {
+          const value = String(row[index] || "").trim();
+          if (value) return value;
+        }
+      }
+      return "";
+    }
+
+    function normalizeImportDate(value) {
+      const text = String(value || "").trim();
+      if (!text) return { iso: "", error: "" };
+      if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+        const parts = text.split("-").map(Number);
+        const date = new Date(parts[0], parts[1] - 1, parts[2]);
+        if (date.getFullYear() === parts[0] && date.getMonth() === parts[1] - 1 && date.getDate() === parts[2]) {
+          return { iso: text, error: "" };
+        }
+      }
+
+      const numeric = text.match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2}|\d{4})$/);
+      if (numeric) {
+        const day = Number(numeric[1]);
+        const month = Number(numeric[2]);
+        let year = Number(numeric[3]);
+        if (year < 100) year += year >= 70 ? 1900 : 2000;
+        const date = new Date(year, month - 1, day);
+        if (date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day) {
+          return { iso: todayISO(date), error: "" };
+        }
+      }
+
+      return { iso: "", error: "date not recognised: " + text };
+    }
+
+    function importCustomerActive(value) {
+      const text = String(value || "").trim().toLowerCase();
+      if (!text) return true;
+      return !["inactive", "disabled", "cancelled", "canceled", "ended", "no", "false", "0"].includes(text);
+    }
+
+    function nextImportDate(startDate, frequencyWeeks) {
+      if (!startDate || Number(frequencyWeeks) === 0) return "";
+      let dueDate = startDate;
+      let guard = 0;
+      while (dueDate < todayISO() && guard < 1000) {
+        dueDate = nextDueDate({ dueDate, frequencyWeeks });
+        guard++;
+      }
+      return dueDate;
     }
 
     function frequencyFromText(value) {
@@ -1412,6 +1516,294 @@
       return match ? Math.max(1, Math.min(12, Number(match[0]))) : 4;
     }
 
+    function normalizeImportPayment(value) {
+      const text = String(value || "").trim().toLowerCase();
+      if (text.includes("stripe") || text === "card") return "Stripe";
+      if (text.includes("gocardless") || text.includes("go cardless") || text.includes("direct debit")) return "GoCardless";
+      if (text.includes("bank") || text.includes("bacs") || text.includes("transfer")) return "Bank transfer";
+      return "Cash";
+    }
+
+    function prepareMappedImport(dataRows, mapping, calculateNextClean) {
+      const existingKeys = new Set(customers.map(c =>
+        String(c.name || "").trim().toLowerCase() + "|" +
+        String(c.address || "").trim().toLowerCase() + "|" +
+        String(c.postcode || "").trim().toLowerCase()
+      ));
+      const seenKeys = new Set();
+      const validRows = [];
+      const failedRows = [];
+
+      dataRows.forEach((row, index) => {
+        const rowNumber = index + 2;
+        const record = {};
+        CSV_IMPORT_FIELDS.forEach(field => {
+          if (field.key) record[field.key] = mappedCSVValue(row, mapping, field.key);
+        });
+
+        const customerSinceResult = normalizeImportDate(record.customerSince);
+        const dueDateResult = normalizeImportDate(record.dueDate);
+        const frequencyWeeks = frequencyFromText(record.frequency);
+        let dueDate = dueDateResult.iso;
+        if (!dueDate && calculateNextClean && customerSinceResult.iso && record.frequency) {
+          dueDate = nextImportDate(customerSinceResult.iso, frequencyWeeks);
+        }
+
+        const price = parseMoney(record.price);
+        const key =
+          String(record.name || "").trim().toLowerCase() + "|" +
+          String(record.address || "").trim().toLowerCase() + "|" +
+          String(record.postcode || "").trim().toLowerCase();
+        const errors = [];
+
+        if (!record.name && !record.address) errors.push("missing name/address");
+        if (existingKeys.has(key) || seenKeys.has(key)) errors.push("duplicate customer");
+        if (record.customerSince && customerSinceResult.error) errors.push(customerSinceResult.error);
+        if (record.dueDate && dueDateResult.error) errors.push(dueDateResult.error);
+
+        if (errors.length) {
+          failedRows.push({ rowNumber, reason: errors.join(", ") });
+          return;
+        }
+
+        seenKeys.add(key);
+        validRows.push({
+          rowNumber,
+          name: record.name || record.address || "Imported customer",
+          address: record.address,
+          postcode: record.postcode,
+          phone: record.phone,
+          email: record.email,
+          roundName: record.round,
+          frequencyWeeks,
+          frequencyText: record.frequency,
+          price,
+          dueDate,
+          customerSince: customerSinceResult.iso,
+          payment: normalizeImportPayment(record.payment),
+          service: record.service || "Window Clean",
+          source: record.source || "CSV import",
+          active: importCustomerActive(record.status),
+          notes: record.notes,
+          hasJob: !!dueDate,
+          zeroPriceJob: !!dueDate && price <= 0
+        });
+      });
+
+      return { validRows, failedRows };
+    }
+
+    async function importMappedRows(prepared, allowZeroPriceJobs) {
+      const importStatus = $("csvImportStatus");
+      const roundMap = new Map(rounds.map(round => [String(round.name || "").trim().toLowerCase(), round]));
+      const newRounds = [];
+      const writeGroups = [];
+      let importedCustomers = 0;
+      let importedJobs = 0;
+
+      for (const item of prepared.validRows) {
+        const rowWrites = [];
+        let round = null;
+        const roundKey = String(item.roundName || "").trim().toLowerCase();
+        if (roundKey) {
+          round = roundMap.get(roundKey) || null;
+          if (!round) {
+            const roundRef = demoMode ? { id: "demo-round-" + Date.now() + "-" + newRounds.length } : doc(collection(db, "rounds"));
+            round = { id: roundRef.id, ownerUid: uid, name: item.roundName.trim(), color: "#0284c7", createdAt: new Date() };
+            roundMap.set(roundKey, round);
+            newRounds.push(round);
+            if (!demoMode) {
+              rowWrites.push({
+                ref: roundRef,
+                data: { ownerUid: uid, name: round.name, color: round.color, createdAt: serverTimestamp() }
+              });
+            }
+          }
+        }
+
+        const customerRef = demoMode
+          ? { id: "demo-import-customer-" + Date.now() + "-" + importedCustomers }
+          : doc(collection(db, "customers"));
+        const customerPayload = {
+          ownerUid: uid,
+          active: item.active,
+          name: item.name,
+          phone: item.phone,
+          email: item.email,
+          address: item.address,
+          postcode: item.postcode,
+          preferredPayment: item.payment,
+          source: item.source,
+          notes: item.notes,
+          roundId: round ? round.id : "",
+          customerSince: item.customerSince || "",
+          createdAt: serverTimestamp()
+        };
+
+        if (demoMode) {
+          customers.push({ id: customerRef.id, ...customerPayload, createdAt: new Date() });
+        } else {
+          rowWrites.push({ ref: customerRef, data: customerPayload });
+        }
+        importedCustomers++;
+
+        if (item.hasJob && (!item.zeroPriceJob || allowZeroPriceJobs)) {
+          const jobRef = demoMode
+            ? { id: "demo-import-job-" + Date.now() + "-" + importedJobs }
+            : doc(collection(db, "jobs"));
+          const jobPayload = {
+            ownerUid: uid,
+            customerId: customerRef.id,
+            roundId: round ? round.id : "",
+            service: item.service,
+            frequencyWeeks: item.frequencyWeeks,
+            recurrenceDay: recurrenceDayFor(item.frequencyWeeks, item.dueDate),
+            price: item.price,
+            dueDate: item.dueDate,
+            paymentMethod: item.payment,
+            notes: item.notes,
+            status: "Due",
+            paid: false,
+            createdAt: serverTimestamp()
+          };
+          if (demoMode) jobs.push({ id: jobRef.id, ...jobPayload, createdAt: new Date() });
+          else rowWrites.push({ ref: jobRef, data: jobPayload });
+          importedJobs++;
+        }
+        if (!demoMode) writeGroups.push(rowWrites);
+      }
+
+      if (!demoMode) {
+        const totalWrites = writeGroups.reduce((total, group) => total + group.length, 0);
+        let savedWrites = 0;
+        let batch = writeBatch(db);
+        let batchSize = 0;
+
+        async function commitImportBatch() {
+          if (!batchSize) return;
+          await batch.commit();
+          savedWrites += batchSize;
+          if (importStatus) importStatus.textContent = "Saved " + savedWrites + " of " + totalWrites + " records...";
+          batch = writeBatch(db);
+          batchSize = 0;
+        }
+
+        for (const group of writeGroups) {
+          if (batchSize && batchSize + group.length > 400) await commitImportBatch();
+          group.forEach(write => batch.set(write.ref, write.data));
+          batchSize += group.length;
+        }
+        await commitImportBatch();
+        await refreshAll();
+      } else {
+        rounds.push(...newRounds);
+        render();
+      }
+
+      setNotice("Imported " + importedCustomers + " customers and " + importedJobs + " jobs.");
+      setTimeout(() => setNotice(""), 4000);
+      openModal("CSV import results",
+        '<div class="grid gap-3">' +
+          '<div class="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-900 text-sm">Imported ' + importedCustomers + ' customers and ' + importedJobs + ' jobs.</div>' +
+          (newRounds.length ? '<div class="text-sm"><b>New rounds:</b> ' + newRounds.map(round => escHtml(round.name)).join(", ") + '</div>' : "") +
+          '<div class="text-sm"><b>Successful rows:</b> ' + prepared.validRows.map(row => row.rowNumber).join(", ") + '</div>' +
+          (prepared.failedRows.length
+            ? '<div class="text-sm"><b>Skipped rows:</b><br>' + prepared.failedRows.map(row => 'Row ' + row.rowNumber + ': ' + escHtml(row.reason)).join("<br>") + '</div>'
+            : '<div class="text-sm text-slate-600">No failed rows.</div>') +
+        '</div>'
+      );
+    }
+
+    function openCSVPreview(rawHeaders, dataRows, mapping, calculateNextClean) {
+      const prepared = prepareMappedImport(dataRows, mapping, calculateNextClean);
+      const zeroPriceCount = prepared.validRows.filter(row => row.zeroPriceJob).length;
+      const customerOnlyCount = prepared.validRows.filter(row => !row.hasJob).length;
+      const jobCount = prepared.validRows.filter(row => row.hasJob && !row.zeroPriceJob).length;
+      const previewRows = prepared.validRows.slice(0, 5);
+
+      openModal("Check CSV import",
+        '<div class="grid gap-4">' +
+          '<div class="grid grid-cols-2 gap-2 text-sm">' +
+            '<div class="rounded-lg bg-emerald-50 border border-emerald-200 p-3"><b>' + prepared.validRows.length + '</b><br>customers ready</div>' +
+            '<div class="rounded-lg bg-sky-50 border border-sky-200 p-3"><b>' + jobCount + '</b><br>priced jobs ready</div>' +
+            '<div class="rounded-lg bg-slate-50 border border-slate-200 p-3"><b>' + customerOnlyCount + '</b><br>customers without jobs</div>' +
+            '<div class="rounded-lg bg-amber-50 border border-amber-200 p-3"><b>' + prepared.failedRows.length + '</b><br>rows skipped</div>' +
+          '</div>' +
+          (previewRows.length
+            ? '<div class="overflow-auto border border-slate-200 rounded-lg"><table class="w-full text-sm"><thead class="bg-slate-50"><tr><th class="text-left p-2">Customer</th><th class="text-left p-2">Round</th><th class="text-left p-2">Next clean</th><th class="text-right p-2">Price</th></tr></thead><tbody>' +
+              previewRows.map(row => '<tr class="border-t border-slate-200"><td class="p-2">' + escHtml(row.name) + '<div class="text-xs text-slate-500">' + escHtml(row.address) + '</div></td><td class="p-2">' + escHtml(row.roundName || "-") + '</td><td class="p-2">' + escHtml(row.dueDate ? formatDate(row.dueDate) : "Customer only") + '</td><td class="p-2 text-right">' + (row.hasJob ? pounds(row.price) : "-") + '</td></tr>').join("") +
+              '</tbody></table></div>'
+            : '<div class="p-3 rounded-lg bg-red-50 border border-red-200 text-red-900">No valid customers are ready to import.</div>') +
+          (zeroPriceCount
+            ? '<label class="flex items-start gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200 text-sm"><input id="allowZeroPriceJobs" type="checkbox" class="mt-1"> <span>Create the ' + zeroPriceCount + ' jobs priced at ' + pounds(0) + '. If left unticked, the customers will still be imported without those jobs.</span></label>'
+            : "") +
+          (prepared.failedRows.length
+            ? '<details class="text-sm"><summary class="font-semibold cursor-pointer">View skipped rows</summary><div class="mt-2">' + prepared.failedRows.slice(0, 30).map(row => 'Row ' + row.rowNumber + ': ' + escHtml(row.reason)).join("<br>") + '</div></details>'
+            : "") +
+          '<div id="csvImportStatus" class="text-sm text-slate-500"></div>' +
+          '<div class="grid grid-cols-2 gap-2">' +
+            '<button id="backToMapping" class="px-3 py-3 rounded-lg bg-white border border-slate-200 font-semibold">Back</button>' +
+            '<button id="confirmMappedImport" ' + (!prepared.validRows.length ? "disabled" : "") + ' class="px-3 py-3 rounded-lg bg-slate-900 text-white font-semibold disabled:opacity-40">Import customers</button>' +
+          '</div>' +
+        '</div>'
+      );
+
+      $("backToMapping").addEventListener("click", () => openCSVMapping(rawHeaders, dataRows, mapping));
+      $("confirmMappedImport").addEventListener("click", async event => {
+        const button = event.currentTarget;
+        button.disabled = true;
+        button.textContent = "Importing...";
+        try {
+          await importMappedRows(prepared, !!($("allowZeroPriceJobs") && $("allowZeroPriceJobs").checked));
+        } catch (error) {
+          console.error(error);
+          try {
+            await refreshAll();
+          } catch (refreshError) {
+            console.error(refreshError);
+          }
+          const status = $("csvImportStatus");
+          if (status) status.textContent = "Import stopped. Existing customers were not deleted. Refresh before retrying so any completed rows are detected as duplicates.";
+          button.disabled = false;
+          button.textContent = "Import customers";
+        }
+      });
+    }
+
+    function openCSVMapping(rawHeaders, dataRows, previousMapping) {
+      const mapping = previousMapping || rawHeaders.map(guessCSVField);
+      const sampleValues = rawHeaders.map((header, index) => {
+        const sampleRow = dataRows.find(row => String(row[index] || "").trim());
+        return sampleRow ? String(sampleRow[index] || "").trim() : "";
+      });
+
+      openModal("Match spreadsheet columns",
+        '<div class="grid gap-4">' +
+          '<div class="p-3 rounded-lg bg-sky-50 border border-sky-200 text-sm text-sky-900">RoundMate has guessed what each column means. Check the choices, especially dates, then preview before importing.</div>' +
+          '<div class="grid gap-2">' +
+            rawHeaders.map((header, index) =>
+              '<div class="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-2 items-center border-b border-slate-100 pb-2">' +
+                '<div class="min-w-0"><div class="font-semibold truncate">' + escHtml(header || "Unnamed column") + '</div><div class="text-xs text-slate-500 truncate">' + escHtml(sampleValues[index] || "No sample value") + '</div></div>' +
+                '<select data-csv-column="' + index + '" class="px-2 py-2 rounded-lg border border-slate-200">' + csvMappingOptions(mapping[index] || "") + '</select>' +
+              '</div>'
+            ).join("") +
+          '</div>' +
+          '<label class="flex items-start gap-2 p-3 rounded-lg bg-slate-50 border border-slate-200 text-sm"><input id="calculateNextClean" type="checkbox" class="mt-1"> <span>If there is no Next clean column, calculate the next date from Customer since + Frequency.</span></label>' +
+          '<button id="previewMappedCSV" class="px-3 py-3 rounded-lg bg-slate-900 text-white font-semibold">Preview import</button>' +
+        '</div>'
+      );
+
+      $("previewMappedCSV").addEventListener("click", () => {
+        const selectedMapping = rawHeaders.map((header, index) => {
+          const select = document.querySelector('[data-csv-column="' + index + '"]');
+          return select ? select.value : "";
+        });
+        const signature = rawHeaders.map(cleanHeader).join("|");
+        localStorage.setItem("roundmateCsvMapping:" + signature, JSON.stringify(selectedMapping));
+        openCSVPreview(rawHeaders, dataRows, selectedMapping, $("calculateNextClean").checked);
+      });
+    }
+
     async function importCustomersCSV(file) {
       if (!file) {
         alert("Choose a CSV file first.");
@@ -1419,142 +1811,22 @@
       }
 
       const text = await file.text();
-      const rows = parseCSV(text);
+      const rows = parseCSV(text.replace(/^\uFEFF/, ""));
       if (rows.length < 2) {
-        alert("No rows found in that CSV.");
+        alert("No customer rows were found in that CSV.");
         return;
       }
 
-      const headers = rows[0].map(cleanHeader);
+      const rawHeaders = rows[0].map(header => String(header || "").trim());
       const dataRows = rows.slice(1);
-      const existingKeys = new Set(customers.map(c => (String(c.name || "").trim().toLowerCase() + "|" + String(c.address || "").trim().toLowerCase() + "|" + String(c.postcode || "").trim().toLowerCase())));
-      const seenKeys = new Set();
-      const validRows = [];
-      const failedRows = [];
-      const zeroPriceRows = [];
-
-      dataRows.forEach((row, index) => {
-        const rowNumber = index + 2;
-        const name = csvValue(row, headers, ["name", "customer", "customer name"]);
-        const address = csvValue(row, headers, ["address", "line1", "street"]);
-        const postcode = csvValue(row, headers, ["postcode", "post code", "zip"]);
-        const price = parseMoney(csvValue(row, headers, ["price", "amount", "charge"]));
-        const dueDate = csvValue(row, headers, ["due date", "duedate", "next clean", "nextclean"]);
-        const key = (name.trim().toLowerCase() + "|" + address.trim().toLowerCase() + "|" + postcode.trim().toLowerCase());
-        const warnings = [];
-
-        if (!name && !address) warnings.push("missing name/address");
-        if (existingKeys.has(key) || seenKeys.has(key)) warnings.push("duplicate customer");
-        if (dueDate && !/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) warnings.push("due date must be YYYY-MM-DD");
-        if (price <= 0 && (dueDate || csvValue(row, headers, ["frequency", "freq"]))) zeroPriceRows.push(rowNumber);
-
-        if (warnings.length) {
-          failedRows.push({ rowNumber, reason: warnings.join(", ") });
-        } else {
-          seenKeys.add(key);
-          validRows.push({ rowNumber, row });
-        }
-      });
-
-      if (zeroPriceRows.length && !confirm("Rows " + zeroPriceRows.join(", ") + " have \u00a30 jobs. Import them anyway?")) {
-        zeroPriceRows.forEach(rowNumber => failedRows.push({ rowNumber, reason: "\u00a30 job not confirmed" }));
-        for (let i = validRows.length - 1; i >= 0; i--) {
-          if (zeroPriceRows.includes(validRows[i].rowNumber)) validRows.splice(i, 1);
-        }
+      const signature = rawHeaders.map(cleanHeader).join("|");
+      let savedMapping = null;
+      try {
+        savedMapping = JSON.parse(localStorage.getItem("roundmateCsvMapping:" + signature) || "null");
+      } catch (error) {
+        savedMapping = null;
       }
-
-      if (!validRows.length) {
-        openModal("CSV import results",
-          '<div class="grid gap-3">' +
-            '<div class="p-3 rounded-xl bg-red-50 border border-red-200 text-red-900 text-sm">No rows were imported.</div>' +
-            (failedRows.length ? '<div class="text-sm"><b>Failed rows:</b><br>' + failedRows.map(r => 'Row ' + r.rowNumber + ': ' + escHtml(r.reason)).join("<br>") + '</div>' : "") +
-          '</div>'
-        );
-        return;
-      }
-
-      if (!confirm("Import " + validRows.length + " valid rows? " + failedRows.length + " rows will be skipped. This only adds data and will not delete existing customers.")) return;
-
-      let importedCustomers = 0;
-      let importedJobs = 0;
-
-      for (const item of validRows) {
-        const row = item.row;
-        const name = csvValue(row, headers, ["name", "customer", "customer name"]);
-        const address = csvValue(row, headers, ["address", "line1", "street"]);
-        const postcode = csvValue(row, headers, ["postcode", "post code", "zip"]);
-        const phone = csvValue(row, headers, ["phone", "mobile", "telephone"]);
-        const email = csvValue(row, headers, ["email", "email address"]);
-        const notes = csvValue(row, headers, ["notes", "note"]);
-        const roundName = csvValue(row, headers, ["round", "round name"]);
-        const payment = normalizePaymentMethod(csvValue(row, headers, ["payment", "payment method", "how they pay"]) || "Cash");
-        const round = rounds.find(r => String(r.name || "").toLowerCase() === roundName.toLowerCase());
-
-        const customerPayload = {
-          ownerUid: uid,
-          active: true,
-          name: name || address || "Imported customer",
-          phone,
-          email,
-          address,
-          postcode,
-          preferredPayment: payment,
-          source: "CSV import",
-          notes,
-          roundId: round ? round.id : "",
-          createdAt: serverTimestamp()
-        };
-
-        let customerRef;
-        if (demoMode) {
-          customerRef = { id: "demo-import-customer-" + Date.now() + "-" + importedCustomers };
-          customers.push({ id: customerRef.id, ...customerPayload, createdAt: new Date() });
-        } else {
-          customerRef = await addDoc(collection(db, "customers"), customerPayload);
-        }
-        importedCustomers++;
-
-        const dueDate = csvValue(row, headers, ["due date", "duedate", "next clean", "nextclean"]);
-        const price = csvValue(row, headers, ["price", "amount", "charge"]);
-        if (dueDate || price) {
-          const frequencyWeeks = frequencyFromText(csvValue(row, headers, ["frequency", "freq"]));
-          const jobDueDate = dueDate || todayISO();
-          const jobPayload = {
-            ownerUid: uid,
-            customerId: customerRef.id,
-            roundId: round ? round.id : "",
-            service: csvValue(row, headers, ["service"]) || "Window Clean",
-            frequencyWeeks,
-            recurrenceDay: recurrenceDayFor(frequencyWeeks, jobDueDate),
-            price: parseMoney(price),
-            dueDate: jobDueDate,
-            paymentMethod: payment,
-            notes,
-            status: "Due",
-            paid: false,
-            createdAt: serverTimestamp()
-          };
-
-          if (demoMode) {
-            jobs.push({ id: "demo-import-job-" + Date.now() + "-" + importedJobs, ...jobPayload, createdAt: new Date() });
-          } else {
-            await addDoc(collection(db, "jobs"), jobPayload);
-          }
-          importedJobs++;
-        }
-      }
-
-      if (!demoMode) await refreshAll();
-      else render();
-      setNotice("Imported " + importedCustomers + " customers and " + importedJobs + " jobs.");
-      setTimeout(() => setNotice(""), 4000);
-      openModal("CSV import results",
-        '<div class="grid gap-3">' +
-          '<div class="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-sm">Imported ' + importedCustomers + ' customers and ' + importedJobs + ' jobs.</div>' +
-          '<div class="text-sm"><b>Successful rows:</b> ' + validRows.map(r => r.rowNumber).join(", ") + '</div>' +
-          (failedRows.length ? '<div class="text-sm"><b>Skipped rows:</b><br>' + failedRows.map(r => 'Row ' + r.rowNumber + ': ' + escHtml(r.reason)).join("<br>") + '</div>' : '<div class="text-sm text-slate-600">No failed rows.</div>') +
-        '</div>'
-      );
+      openCSVMapping(rawHeaders, dataRows, Array.isArray(savedMapping) ? savedMapping : null);
     }
 
     function messagePayment(job, customer) {
@@ -1757,7 +2029,7 @@
       const r = getRoundById(c.roundId || "");
       const next = getNextJobForCustomer(c.id);
       const stats = customerStats(c.id);
-      const since = isTimestamp(c.createdAt) ? todayISO(c.createdAt.toDate()).split("-").reverse().join("/") : "-";
+      const since = customerSinceLabel(c);
       const active = c.active !== false;
       const payment = normalizePaymentMethod(c.preferredPayment || "Cash");
 
@@ -2173,8 +2445,8 @@
           '<div class="font-semibold text-lg mb-3">Import customers</div>' +
           '<div class="grid gap-3">' +
             '<input id="csvImportFile" type="file" accept=".csv,text/csv" class="px-3 py-2 rounded-xl border border-slate-200 bg-white" />' +
-            '<div class="text-sm text-slate-500">CSV columns can include name, address, postcode, phone, email, payment, price, frequency, due date, round, notes.</div>' +
-            '<button id="btnImportCSV" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">Import CSV</button>' +
+            '<div class="text-sm text-slate-500">Upload an existing spreadsheet as CSV. RoundMate will recognise common headings and spelling variations, accept UK dates, and let you check the column mapping before anything is added.</div>' +
+            '<button id="btnImportCSV" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">Check CSV and preview</button>' +
           '</div>' +
         '</div>' +
         '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">' +
@@ -2525,7 +2797,7 @@
 
       const stats = customerStats(c.id);
       const next = getNextJobForCustomer(c.id);
-      const since = isTimestamp(c.createdAt) ? todayISO(c.createdAt.toDate()).split("-").reverse().join("/") : "-";
+      const since = customerSinceLabel(c);
 
       openModal(c.name || "Customer",
         '<div class="grid gap-4">' +
@@ -2692,6 +2964,7 @@
           postcode: c.postcode || "",
           payment: c.preferredPayment || "",
           source: c.source || "",
+          customerSince: c.customerSince ? formatDate(c.customerSince) : "",
           round: r ? r.name : "",
           notes: c.notes || "",
           active: c.active !== false ? "active" : "disabled",
