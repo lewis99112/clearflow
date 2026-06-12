@@ -1891,6 +1891,27 @@
       return renderMessageTemplate("invoice", job, customer);
     }
 
+    function isIOSDevice() {
+      return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+        (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    }
+
+    function phoneForText(phone) {
+      return String(phone || "").trim().replace(/[^\d+]/g, "");
+    }
+
+    function openTextMessage(customer, message) {
+      const phone = phoneForText(customer && customer.phone);
+      if (!phone) {
+        setNotice("No phone number is saved for this customer.");
+        setTimeout(() => setNotice(""), 3500);
+        return;
+      }
+
+      const separator = isIOSDevice() ? "&" : "?";
+      window.location.href = "sms:" + phone + separator + "body=" + encodeURIComponent(message || "");
+    }
+
     function paymentLinkFor(job, customer) {
       const method = paymentMethodFor(job, customer);
       if (method === "Stripe") {
@@ -1904,14 +1925,20 @@
     function openDoneMessage(job) {
       const customer = getCustomerById(job.customerId);
       const method = normalizePaymentMethod(job.paymentMethod);
+      const phone = customer && customer.phone ? customer.phone : "";
       openModal("Clean marked done",
         '<div class="grid gap-4">' +
           '<div class="p-4 rounded-2xl bg-slate-50 border border-slate-200">' +
             '<div class="text-sm text-slate-500">Payment method</div>' +
             '<div class="mt-1 flex items-center gap-2">' + paymentBadge(method) + '<span class="text-sm font-medium">' + escHtml(paymentActionText(job)) + '</span></div>' +
           '</div>' +
+          (phone
+            ? '<div class="text-sm text-slate-600"><span class="font-semibold text-slate-900">Text to:</span> ' + escHtml(phone) + '</div>'
+            : '<div class="p-3 rounded-xl bg-amber-50 border border-amber-200 text-sm text-amber-800">No phone number saved. Add one in the customer details to use the text buttons.</div>') +
           '<div class="grid gap-2">' +
-            '<button data-action="cleanedText" data-id="' + job.id + '" class="px-3 py-3 rounded-xl bg-slate-900 text-white text-sm font-medium">Copy cleaned today message</button>' +
+            '<button data-action="textCleaned" data-id="' + job.id + '" class="px-3 py-3 rounded-xl bg-sky-600 text-white text-sm font-semibold">Text cleaned message</button>' +
+            '<button data-action="cleanedText" data-id="' + job.id + '" class="px-3 py-3 rounded-xl bg-white border border-slate-200 text-sm font-medium">Copy cleaned message</button>' +
+            '<button data-action="textPaymentReminder" data-id="' + job.id + '" class="px-3 py-3 rounded-xl bg-slate-900 text-white text-sm font-medium">Text payment reminder</button>' +
             '<button data-action="paymentReminder" data-id="' + job.id + '" class="px-3 py-3 rounded-xl bg-white border border-slate-200 text-sm font-medium">Copy payment reminder</button>' +
             '<button data-action="reviewText" data-id="' + job.id + '" class="px-3 py-3 rounded-xl bg-white border border-slate-200 text-sm font-medium">Copy review request</button>' +
           '</div>' +
@@ -2129,6 +2156,18 @@
       scope.querySelectorAll('[data-action="cleanedText"]').forEach(b => b.addEventListener("click", () => {
         const j = jobs.find(x => x.id === b.dataset.id);
         copyToClipboard(messageCleaned(j, j ? getCustomerById(j.customerId) : null));
+      }));
+
+      scope.querySelectorAll('[data-action="textCleaned"]').forEach(b => b.addEventListener("click", () => {
+        const j = jobs.find(x => x.id === b.dataset.id);
+        const customer = j ? getCustomerById(j.customerId) : null;
+        openTextMessage(customer, messageCleaned(j, customer));
+      }));
+
+      scope.querySelectorAll('[data-action="textPaymentReminder"]').forEach(b => b.addEventListener("click", () => {
+        const j = jobs.find(x => x.id === b.dataset.id);
+        const customer = j ? getCustomerById(j.customerId) : null;
+        openTextMessage(customer, messagePayment(j, customer));
       }));
 
       scope.querySelectorAll('[data-action="reviewText"]').forEach(b => b.addEventListener("click", () => {
