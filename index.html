@@ -2065,12 +2065,12 @@
       if (status === "Due") {
         buttons += '<button data-action="done" data-id="' + job.id + '" class="px-3 py-3 rounded-xl bg-slate-900 text-white text-sm font-medium">Done</button>';
         buttons += '<button data-action="paid" data-id="' + job.id + '" class="px-3 py-3 rounded-xl bg-white border border-slate-200 text-sm font-medium">Paid</button>';
-        buttons += '<button data-action="paymentReminder" data-id="' + job.id + '" class="px-3 py-3 rounded-xl bg-white border border-slate-200 text-sm font-medium">Reminder</button>';
+        buttons += '<button data-action="textPaymentReminder" data-id="' + job.id + '" class="px-3 py-3 rounded-xl bg-white border border-slate-200 text-sm font-medium">Text reminder</button>';
       }
 
       if (status === "Unpaid") {
         buttons += '<button data-action="paid" data-id="' + job.id + '" class="px-3 py-3 rounded-xl bg-slate-900 text-white text-sm font-medium">Paid</button>';
-        buttons += '<button data-action="paymentReminder" data-id="' + job.id + '" class="px-3 py-3 rounded-xl bg-white border border-slate-200 text-sm font-medium">Reminder</button>';
+        buttons += '<button data-action="textPaymentReminder" data-id="' + job.id + '" class="px-3 py-3 rounded-xl bg-sky-600 text-white text-sm font-semibold">Text reminder</button>';
       }
 
       buttons += '<button data-action="viewJob" data-id="' + job.id + '" class="px-3 py-3 rounded-xl bg-white border border-slate-200 text-sm font-medium">More</button>';
@@ -2954,6 +2954,7 @@
             (status === "Due" ? '<button data-action="done" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">Done</button>' : "") +
             (status !== "Paid" ? '<button data-action="paid" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Paid</button>' : "") +
             '<button data-action="cleanedText" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Copy cleaned today</button>' +
+            '<button data-action="textPaymentReminder" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-sky-600 text-white text-sm font-semibold">Text payment reminder</button>' +
             '<button data-action="paymentReminder" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Copy payment reminder</button>' +
             '<button data-action="reviewText" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Copy review request</button>' +
             '<button data-action="invoice" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Invoice</button>' +
