@@ -973,6 +973,56 @@
       await refreshAll();
     }
 
+    async function updateRound(roundId, data) {
+      const payload = {
+        name: data.name || "",
+        color: data.color || "#0f172a"
+      };
+
+      if (demoMode) {
+        const round = rounds.find(r => r.id === roundId);
+        if (round) Object.assign(round, payload);
+        render();
+        openRoundDetails(roundId);
+        return;
+      }
+
+      await updateDoc(doc(db, "rounds", roundId), payload);
+      const round = rounds.find(r => r.id === roundId);
+      if (round) Object.assign(round, payload);
+      render();
+      openRoundDetails(roundId);
+    }
+
+    async function moveCustomerToRound(customerId, roundId, returnRoundId) {
+      const customer = customers.find(c => c.id === customerId);
+      if (!customer) return;
+
+      if (demoMode) {
+        customer.roundId = roundId || "";
+        jobs.forEach(j => {
+          if (j.customerId === customerId && effectiveStatus(j) !== "Paid") j.roundId = roundId || "";
+        });
+        render();
+        openRoundDetails(returnRoundId);
+        return;
+      }
+
+      const batch = writeBatch(db);
+      batch.update(doc(db, "customers", customerId), { roundId: roundId || "" });
+      jobs
+        .filter(j => j.customerId === customerId && effectiveStatus(j) !== "Paid")
+        .forEach(j => batch.update(doc(db, "jobs", j.id), { roundId: roundId || "" }));
+      await batch.commit();
+
+      customer.roundId = roundId || "";
+      jobs.forEach(j => {
+        if (j.customerId === customerId && effectiveStatus(j) !== "Paid") j.roundId = roundId || "";
+      });
+      render();
+      openRoundDetails(returnRoundId);
+    }
+
     async function createCustomer(data) {
       const payload = {
         ownerUid: uid,
@@ -2266,6 +2316,8 @@
         '<div class="grid gap-3">' +
           (rounds.length ? rounds.map(r => {
             const activeJobs = jobs.filter(j => j.roundId === r.id && effectiveStatus(j) !== "Paid");
+            const roundCustomers = customers.filter(c => c.roundId === r.id);
+            const activeCustomers = roundCustomers.filter(c => c.active !== false).length;
             const value = activeJobs.reduce((sum,j) => sum + Number(j.price || 0), 0);
 
             return '' +
@@ -2276,9 +2328,13 @@
                       '<span class="inline-block w-4 h-4 rounded-full border border-slate-300" style="background:' + escAttr(r.color || "#0f172a") + '"></span>' +
                       escHtml(r.name || "") +
                     '</div>' +
-                    '<div class="text-sm text-slate-500">' + activeJobs.length + ' active jobs - ' + pounds(value) + '</div>' +
+                    '<div class="text-sm text-slate-500">' + activeCustomers + ' customers - ' + activeJobs.length + ' active jobs - ' + pounds(value) + '</div>' +
                   '</div>' +
-                  '<button data-action="deleteRound" data-id="' + r.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Delete</button>' +
+                  '<div class="flex flex-wrap justify-end gap-2">' +
+                    '<button data-action="openRound" data-id="' + r.id + '" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium">View</button>' +
+                    '<button data-action="editRound" data-id="' + r.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Adjust</button>' +
+                    '<button data-action="deleteRound" data-id="' + r.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Delete</button>' +
+                  '</div>' +
                 '</div>' +
               '</div>';
           }).join("") : '<div class="p-4 rounded-2xl bg-white border border-slate-200 text-slate-600">No rounds yet.</div>') +
@@ -2291,7 +2347,90 @@
         e.target.reset();
       });
 
+      content.querySelectorAll('[data-action="openRound"]').forEach(b => b.addEventListener("click", () => openRoundDetails(b.dataset.id)));
+      content.querySelectorAll('[data-action="editRound"]').forEach(b => b.addEventListener("click", () => openEditRound(b.dataset.id)));
       content.querySelectorAll('[data-action="deleteRound"]').forEach(b => b.addEventListener("click", () => deleteRound(b.dataset.id)));
+    }
+
+    function openEditRound(roundId) {
+      const r = getRoundById(roundId);
+      if (!r) return;
+
+      openModal("Adjust round",
+        '<form id="fEditRound" class="grid gap-4">' +
+          '<div class="grid gap-1">' +
+            '<label class="text-sm font-medium">Round name</label>' +
+            '<input name="name" value="' + escAttr(r.name || "") + '" class="px-3 py-2 rounded-xl border border-slate-200" required />' +
+          '</div>' +
+          '<div class="grid gap-1">' +
+            '<label class="text-sm font-medium">Colour</label>' +
+            '<input name="color" type="color" value="' + escAttr(r.color || "#0f172a") + '" class="h-11 rounded-xl border border-slate-200 bg-white" />' +
+          '</div>' +
+          '<button class="px-3 py-3 rounded-xl bg-slate-900 text-white text-sm font-semibold">Save changes</button>' +
+        '</form>'
+      );
+
+      $("fEditRound").addEventListener("submit", async e => {
+        e.preventDefault();
+        if (!setFormSaving(e.target)) return;
+        await updateRound(roundId, Object.fromEntries(new FormData(e.target).entries()));
+      });
+    }
+
+    function openRoundDetails(roundId) {
+      const r = getRoundById(roundId);
+      if (!r) return;
+
+      const roundCustomers = customers
+        .filter(c => c.roundId === roundId)
+        .sort((a, b) => String(a.address || a.name || "").localeCompare(String(b.address || b.name || "")));
+      const activeJobs = jobs.filter(j => j.roundId === roundId && effectiveStatus(j) !== "Paid");
+      const value = activeJobs.reduce((sum, j) => sum + Number(j.price || 0), 0);
+      const customerRows = roundCustomers.length ? roundCustomers.map(c => {
+        const next = getNextJobForCustomer(c.id);
+        return '' +
+          '<div class="rounded-2xl border border-slate-200 p-3 bg-white">' +
+            '<div class="flex items-start justify-between gap-3">' +
+              '<div class="min-w-0">' +
+                '<div class="font-semibold text-slate-950">' + escHtml(c.address || c.name || "Unnamed customer") + '</div>' +
+                (c.postcode ? '<div class="text-sm text-slate-600">' + escHtml(c.postcode) + '</div>' : "") +
+                (c.name && c.name !== c.address ? '<div class="text-sm text-slate-500">' + escHtml(c.name) + '</div>' : "") +
+                '<div class="text-xs text-slate-500 mt-1">' + (next ? 'Next clean ' + escHtml(formatDate(next.dueDate)) + ' - ' + pounds(next.price) : 'No upcoming job') + '</div>' +
+              '</div>' +
+              (c.active === false ? '<span class="text-xs px-2 py-1 rounded-lg bg-slate-100 text-slate-500">Inactive</span>' : "") +
+            '</div>' +
+            '<div class="mt-3 grid grid-cols-[1fr_auto] gap-2">' +
+              '<select data-round-select="' + c.id + '" class="px-3 py-2 rounded-xl border border-slate-200">' + roundOptionsHtml(c.roundId || "") + '</select>' +
+              '<button data-action="moveCustomerRound" data-id="' + c.id + '" data-return-round="' + roundId + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">Move</button>' +
+            '</div>' +
+          '</div>';
+      }).join("") : '<div class="p-4 rounded-2xl bg-white border border-slate-200 text-slate-600">No customers in this round yet.</div>';
+
+      openModal(r.name || "Round",
+        '<div class="grid gap-4">' +
+          '<div class="grid grid-cols-3 gap-2">' +
+            '<div class="rounded-xl bg-slate-50 border border-slate-200 p-3"><div class="text-xs text-slate-500">Customers</div><div class="font-bold text-lg">' + roundCustomers.length + '</div></div>' +
+            '<div class="rounded-xl bg-slate-50 border border-slate-200 p-3"><div class="text-xs text-slate-500">Active jobs</div><div class="font-bold text-lg">' + activeJobs.length + '</div></div>' +
+            '<div class="rounded-xl bg-slate-50 border border-slate-200 p-3"><div class="text-xs text-slate-500">Value</div><div class="font-bold text-lg">' + pounds(value) + '</div></div>' +
+          '</div>' +
+          '<div class="flex flex-wrap gap-2">' +
+            '<button data-action="editRound" data-id="' + r.id + '" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium">Adjust round</button>' +
+            '<button id="roundRouteButton" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">Route order</button>' +
+          '</div>' +
+          '<div class="grid gap-2">' + customerRows + '</div>' +
+        '</div>'
+      );
+
+      $("modalBody").querySelectorAll('[data-action="editRound"]').forEach(b => b.addEventListener("click", () => openEditRound(b.dataset.id)));
+      $("modalBody").querySelectorAll('[data-action="moveCustomerRound"]').forEach(b => b.addEventListener("click", async () => {
+        const select = $("modalBody").querySelector('[data-round-select="' + b.dataset.id + '"]');
+        await moveCustomerToRound(b.dataset.id, select ? select.value : "", b.dataset.returnRound);
+      }));
+      $("roundRouteButton").addEventListener("click", () => {
+        closeModal();
+        activeTab = "route";
+        render();
+      });
     }
 
     function renderJobs(list) {
