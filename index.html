@@ -128,6 +128,7 @@
     const FREQS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 101, 102, 103, 106, 112];
     const PAYMENTS = ["Cash", "Bank transfer", "Stripe", "GoCardless"];
     const SOURCES = ["Leaflet", "Facebook", "Google", "Nextdoor", "Referral", "Other"];
+    const APP_VERSION = "0.9.0 beta";
 
     const $ = (id) => document.getElementById(id);
     const content = $("content");
@@ -385,11 +386,12 @@
     function nextDueDate(job) {
       const frequency = Number(job && job.frequencyWeeks || 0);
       const dueDate = job && job.dueDate ? job.dueDate : todayISO();
-      const recurrenceDay = recurrenceDayFor(frequency, dueDate, job && job.recurrenceDay);
+      const scheduleDate = job && job.scheduleAnchorDate ? job.scheduleAnchorDate : dueDate;
+      const recurrenceDay = recurrenceDayFor(frequency, scheduleDate, job && job.recurrenceDay);
       if (frequency === 0) return "";
-      if (frequency === 52 || frequency === 112) return addMonthsISO(dueDate, 12, recurrenceDay);
-      if (frequency >= 101 && frequency <= 111) return addMonthsISO(dueDate, frequency - 100, recurrenceDay);
-      return addDaysISO(dueDate, frequency * 7);
+      if (frequency === 52 || frequency === 112) return addMonthsISO(scheduleDate, 12, recurrenceDay);
+      if (frequency >= 101 && frequency <= 111) return addMonthsISO(scheduleDate, frequency - 100, recurrenceDay);
+      return addDaysISO(scheduleDate, frequency * 7);
     }
 
     function mapLink(address, postcode) {
@@ -445,6 +447,31 @@
     function monthEndDate() {
       const d = new Date();
       return new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999);
+    }
+
+    function yearStartDate() {
+      const d = new Date();
+      return new Date(d.getFullYear(), 0, 1);
+    }
+
+    function yearEndDate() {
+      const d = new Date();
+      return new Date(d.getFullYear(), 11, 31, 23, 59, 59, 999);
+    }
+
+    function yearlyMultiplier(frequencyWeeks) {
+      const frequency = Number(frequencyWeeks || 0);
+      if (!frequency) return 1;
+      if (frequency === 112) return 1;
+      if (frequency >= 101) {
+        const months = frequency - 100;
+        return months > 0 ? 12 / months : 1;
+      }
+      return 52 / frequency;
+    }
+
+    function expectedYearlyValueForJob(job) {
+      return Number(job && job.price || 0) * yearlyMultiplier(job && job.frequencyWeeks);
     }
 
     function monthName(monthIndex) {
@@ -1149,7 +1176,8 @@
           dueDate: data.dueDate,
           paymentMethod: normalizePaymentMethod(data.paymentMethod),
           notes: data.notes || "",
-          routeOrder: dateChanged ? null : job.routeOrder
+          routeOrder: dateChanged ? null : job.routeOrder,
+          scheduleAnchorDate: dateChanged ? null : (job.scheduleAnchorDate || null)
         });
         render();
         return;
@@ -1163,6 +1191,7 @@
         price,
         dueDate: data.dueDate,
         routeOrder: dateChanged ? null : (existing && existing.routeOrder !== undefined ? existing.routeOrder : null),
+        scheduleAnchorDate: dateChanged ? null : (existing && existing.scheduleAnchorDate ? existing.scheduleAnchorDate : null),
         paymentMethod: normalizePaymentMethod(data.paymentMethod),
         notes: data.notes || ""
       });
@@ -1280,7 +1309,8 @@
               status: "Due",
               paid: false,
               dueDate: nextDue,
-              recurrenceDay: recurrenceDayFor(fw, job.dueDate, job.recurrenceDay),
+              recurrenceDay: recurrenceDayFor(fw, job.scheduleAnchorDate || job.dueDate, job.recurrenceDay),
+              scheduleAnchorDate: null,
               completedFromJobId: jobId,
               doneAt: null
             });
@@ -1319,7 +1349,7 @@
               roundId: job.roundId || "",
               service: job.service || "Window Clean",
               frequencyWeeks: fw,
-              recurrenceDay: recurrenceDayFor(fw, job.dueDate, job.recurrenceDay),
+              recurrenceDay: recurrenceDayFor(fw, job.scheduleAnchorDate || job.dueDate, job.recurrenceDay),
               price: Number(job.price || 0),
               dueDate: nextDue,
               paymentMethod: normalizePaymentMethod(job.paymentMethod),
@@ -1366,6 +1396,7 @@
 
       if (demoMode) {
         job.dueDate = nextDue;
+        job.scheduleAnchorDate = null;
         job.skippedAt = new Date();
         job.status = "Due";
         render();
@@ -1375,6 +1406,7 @@
 
       await updateDoc(doc(db, "jobs", jobId), {
         dueDate: nextDue,
+        scheduleAnchorDate: null,
         skippedAt: serverTimestamp(),
         status: "Due"
       });
@@ -1406,6 +1438,59 @@
       }
       render();
       refreshOpenCalendarDay();
+    }
+
+    async function moveCalendarDay(fromIso, toIso, permanent) {
+      if (!fromIso || !toIso || fromIso === toIso) return;
+      const dayJobs = jobsOnDate(fromIso).filter(job => effectiveStatus(job) === "Due");
+      if (!dayJobs.length) return;
+
+      const total = dayJobs.reduce((sum, job) => sum + Number(job.price || 0), 0);
+      const modeText = permanent
+        ? "This will also move the future schedule/cycle to the new date."
+        : "This is a rain day move. The next recurring clean will stay based on the original date.";
+      if (!confirm("Move " + dayJobs.length + " jobs from " + formatDate(fromIso) + " to " + formatDate(toIso) + "?\n\nTotal value: " + pounds(total) + "\n\n" + modeText + "\n\nCustomer records will not be deleted or changed.")) return;
+
+      if (demoMode) {
+        dayJobs.forEach(job => {
+          job.dueDate = toIso;
+          job.routeOrder = null;
+          job.scheduleAnchorDate = permanent ? null : fromIso;
+          if (permanent && isMonthlyFrequency(job.frequencyWeeks)) {
+            job.recurrenceDay = recurrenceDayFor(job.frequencyWeeks, toIso);
+          }
+        });
+        activeCalendarDayIso = toIso;
+        render();
+        openCalendarDay(toIso);
+        return;
+      }
+
+      const batch = writeBatch(db);
+      dayJobs.forEach(job => {
+        const payload = {
+          dueDate: toIso,
+          routeOrder: null,
+          scheduleAnchorDate: permanent ? null : fromIso
+        };
+        if (permanent && isMonthlyFrequency(job.frequencyWeeks)) {
+          payload.recurrenceDay = recurrenceDayFor(job.frequencyWeeks, toIso);
+        }
+        batch.update(doc(db, "jobs", job.id), payload);
+      });
+      await batch.commit();
+
+      dayJobs.forEach(job => {
+        job.dueDate = toIso;
+        job.routeOrder = null;
+        job.scheduleAnchorDate = permanent ? null : fromIso;
+        if (permanent && isMonthlyFrequency(job.frequencyWeeks)) {
+          job.recurrenceDay = recurrenceDayFor(job.frequencyWeeks, toIso);
+        }
+      });
+      activeCalendarDayIso = toIso;
+      render();
+      openCalendarDay(toIso);
     }
 
     function detectCSVDelimiter(text) {
@@ -2077,7 +2162,7 @@
     }
 
     function setTabsUI() {
-      const moreTabs = ["more", "route", "week", "overdue", "unpaid", "stats", "settings", "all"];
+      const moreTabs = ["more", "route", "week", "overdue", "unpaid", "stats", "health", "settings", "all"];
       document.querySelectorAll(".tab").forEach(b => {
         const isActive = b.dataset.tab === activeTab || (b.dataset.tab === "more" && moreTabs.includes(activeTab));
         b.className = "tab px-2 sm:px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold border " +
@@ -2228,6 +2313,12 @@
       scope.querySelectorAll('[data-action="tomorrowReminder"]').forEach(b => b.addEventListener("click", () => {
         const j = jobs.find(x => x.id === b.dataset.id);
         copyToClipboard(messageTomorrowReminder(j, j ? getCustomerById(j.customerId) : null));
+      }));
+
+      scope.querySelectorAll('[data-action="textTomorrowReminder"]').forEach(b => b.addEventListener("click", () => {
+        const j = jobs.find(x => x.id === b.dataset.id);
+        const customer = j ? getCustomerById(j.customerId) : null;
+        openTextMessage(customer, messageTomorrowReminder(j, customer));
       }));
     }
 
@@ -2443,9 +2534,12 @@
       };
       const title = titles[activeTab] || "Jobs";
       const total = list.reduce((sum, job) => sum + Number(job.price || 0), 0);
+      const subcopy = activeTab === "today"
+        ? '<div class="text-sm text-slate-600 mt-2">Work mode: address, payment, notes, Done, Paid, Reminder, More.</div>'
+        : "";
       const header =
         '<div class="flex items-end justify-between gap-3 mb-4">' +
-          '<div><h2 class="rm-section-title text-2xl font-bold text-slate-950">' + title + '</h2></div>' +
+          '<div><h2 class="rm-section-title text-2xl font-bold text-slate-950">' + title + '</h2>' + subcopy + '</div>' +
           '<div class="text-right"><div class="text-2xl font-bold text-slate-950">' + list.length + '</div><div class="text-sm text-slate-500">' + pounds(total) + '</div></div>' +
         '</div>';
       if (!list.length) {
@@ -2453,6 +2547,44 @@
         return;
       }
       content.innerHTML = header + list.map(jobCard).join("");
+      wireJobButtons();
+    }
+
+    function renderUnpaidJobs(list) {
+      const total = list.reduce((sum, job) => sum + Number(job.price || 0), 0);
+      const today = todayISO();
+      const oldest = list.length ? sortJobsByDue(list.slice())[0] : null;
+      const stripeCount = list.filter(j => paymentMethodFor(j, getCustomerById(j.customerId)) === "Stripe").length;
+      const goCardlessCount = list.filter(j => paymentMethodFor(j, getCustomerById(j.customerId)) === "GoCardless").length;
+      const bankCount = list.filter(j => paymentMethodFor(j, getCustomerById(j.customerId)) === "Bank transfer").length;
+      const cashCount = list.filter(j => paymentMethodFor(j, getCustomerById(j.customerId)) === "Cash").length;
+
+      const header =
+        '<div class="mb-4">' +
+          '<div class="flex items-end justify-between gap-3">' +
+            '<div><h2 class="rm-section-title text-2xl font-bold text-slate-950">Unpaid jobs</h2><div class="text-sm text-slate-600 mt-2">Debt chasing: text reminder, mark paid, or open More for the full job.</div></div>' +
+            '<div class="text-right"><div class="text-2xl font-bold text-slate-950">' + list.length + '</div><div class="text-sm text-slate-500">' + pounds(total) + '</div></div>' +
+          '</div>' +
+          '<div class="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2">' +
+            '<div class="rounded-xl bg-white border border-slate-200 p-3"><div class="text-xs text-slate-500">Total owed</div><div class="font-bold">' + pounds(total) + '</div></div>' +
+            '<div class="rounded-xl bg-white border border-slate-200 p-3"><div class="text-xs text-slate-500">Oldest</div><div class="font-bold">' + (oldest ? escHtml(formatDate(oldest.dueDate)) : "-") + '</div></div>' +
+            '<div class="rounded-xl bg-white border border-slate-200 p-3"><div class="text-xs text-slate-500">Card / GC</div><div class="font-bold">' + stripeCount + ' / ' + goCardlessCount + '</div></div>' +
+            '<div class="rounded-xl bg-white border border-slate-200 p-3"><div class="text-xs text-slate-500">BACS / Cash</div><div class="font-bold">' + bankCount + ' / ' + cashCount + '</div></div>' +
+          '</div>' +
+        '</div>';
+
+      if (!list.length) {
+        content.innerHTML = header + '<div class="p-5 rounded-lg bg-white border border-slate-200 text-slate-600">Nothing unpaid. Lovely bit of admin peace.</div>';
+        return;
+      }
+
+      const sorted = sortJobsByDue(list.slice()).sort((a, b) => {
+        const overdueA = String(a.dueDate || "") < today ? 0 : 1;
+        const overdueB = String(b.dueDate || "") < today ? 0 : 1;
+        if (overdueA !== overdueB) return overdueA - overdueB;
+        return String(a.dueDate || "").localeCompare(String(b.dueDate || ""));
+      });
+      content.innerHTML = header + sorted.map(jobCard).join("");
       wireJobButtons();
     }
 
@@ -2474,7 +2606,8 @@
           '<div class="mt-3 grid grid-cols-2 gap-2">' +
             '<button data-action="moveUp" data-id="' + job.id + '" ' + (index === 0 ? "disabled" : "") + ' class="px-3 py-3 rounded-xl bg-white border border-slate-200 text-sm font-medium disabled:opacity-40">Move up</button>' +
             '<button data-action="moveDown" data-id="' + job.id + '" ' + (index === total - 1 ? "disabled" : "") + ' class="px-3 py-3 rounded-xl bg-white border border-slate-200 text-sm font-medium disabled:opacity-40">Move down</button>' +
-            '<button data-action="tomorrowReminder" data-id="' + job.id + '" class="col-span-2 px-3 py-3 rounded-xl bg-white border border-slate-200 text-sm font-medium">Copy reminder text</button>' +
+            '<button data-action="textTomorrowReminder" data-id="' + job.id + '" class="px-3 py-3 rounded-xl bg-sky-600 text-white text-sm font-semibold">Text due reminder</button>' +
+            '<button data-action="tomorrowReminder" data-id="' + job.id + '" class="px-3 py-3 rounded-xl bg-white border border-slate-200 text-sm font-medium">Copy reminder</button>' +
           '</div>' +
         '</div>';
     }
@@ -2522,6 +2655,7 @@
         ["overdue", "Overdue", "Jobs that need attention"],
         ["unpaid", "Unpaid", "Money still owed"],
         ["stats", "Stats", "Round totals and customers"],
+        ["health", "Health checks", "Find missing details"],
         ["all", "All jobs", "Full job history"],
         ["settings", "Settings", "Payments, messages and backup"]
       ];
@@ -2558,11 +2692,18 @@
     function renderStats() {
       const ms = monthStartDate().getTime();
       const me = monthEndDate().getTime();
+      const ys = yearStartDate().getTime();
+      const ye = yearEndDate().getTime();
 
       let paidMonth = 0;
-      let dueMonth = 0;
+      let paidYear = 0;
+      let scheduledMonth = 0;
+      let scheduledYear = 0;
+      let expectedMonthly = 0;
+      let expectedYearly = 0;
       let unpaidTotal = 0;
       const activeCustomers = customers.filter(c => c.active !== false).length;
+      const activeOpenJobs = jobs.filter(j => effectiveStatus(j) !== "Paid" && isActiveCustomer(j.customerId));
 
       jobs.forEach(j => {
         const st = effectiveStatus(j);
@@ -2571,7 +2712,8 @@
 
         if (j.dueDate) {
           const d = new Date(j.dueDate + "T00:00:00").getTime();
-          if (d >= ms && d <= me && st === "Due") dueMonth += Number(j.price || 0);
+          if (d >= ms && d <= me && (st === "Due" || st === "Unpaid")) scheduledMonth += Number(j.price || 0);
+          if (d >= ys && d <= ye && (st === "Due" || st === "Unpaid")) scheduledYear += Number(j.price || 0);
         }
 
         if (st === "Paid") {
@@ -2579,17 +2721,103 @@
           if (paidAt) {
             const t = paidAt.getTime();
             if (t >= ms && t <= me) paidMonth += Number(j.price || 0);
+            if (t >= ys && t <= ye) paidYear += Number(j.price || 0);
           }
         }
       });
 
+      activeOpenJobs.forEach(j => {
+        expectedYearly += expectedYearlyValueForJob(j);
+      });
+      expectedMonthly = expectedYearly / 12;
+
       content.innerHTML =
         '<div class="grid md:grid-cols-4 gap-3">' +
           '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm"><div class="text-sm text-slate-500">Paid this month</div><div class="text-2xl font-bold">' + pounds(paidMonth) + '</div></div>' +
-          '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm"><div class="text-sm text-slate-500">Due this month</div><div class="text-2xl font-bold">' + pounds(dueMonth) + '</div></div>' +
+          '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm"><div class="text-sm text-slate-500">Paid this year</div><div class="text-2xl font-bold">' + pounds(paidYear) + '</div></div>' +
+          '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm"><div class="text-sm text-slate-500">Scheduled this month</div><div class="text-2xl font-bold">' + pounds(scheduledMonth) + '</div></div>' +
+          '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm"><div class="text-sm text-slate-500">Scheduled this year</div><div class="text-2xl font-bold">' + pounds(scheduledYear) + '</div></div>' +
+          '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm"><div class="text-sm text-slate-500">Expected monthly value</div><div class="text-2xl font-bold">' + pounds(expectedMonthly) + '</div></div>' +
+          '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm"><div class="text-sm text-slate-500">Expected yearly value</div><div class="text-2xl font-bold">' + pounds(expectedYearly) + '</div></div>' +
           '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm"><div class="text-sm text-slate-500">Unpaid total</div><div class="text-2xl font-bold">' + pounds(unpaidTotal) + '</div></div>' +
           '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm"><div class="text-sm text-slate-500">Active customers</div><div class="text-2xl font-bold">' + activeCustomers + '</div></div>' +
+        '</div>' +
+        '<div class="mt-4 p-4 rounded-2xl bg-sky-50 border border-sky-200 text-sm text-sky-900">' +
+          '<b>Note:</b> scheduled and expected values are work value estimates, not money already earned. Paid totals only count jobs marked Paid.' +
         '</div>';
+    }
+
+    function duplicateFutureJobs() {
+      const today = todayISO();
+      const seen = new Map();
+      const duplicates = [];
+      jobs.forEach(job => {
+        if (effectiveStatus(job) !== "Due" || String(job.dueDate || "") < today) return;
+        const key = [
+          job.customerId || "",
+          job.service || "",
+          job.dueDate || "",
+          Number(job.price || 0),
+          Number(job.frequencyWeeks || 0)
+        ].join("|");
+        if (seen.has(key)) {
+          duplicates.push(job);
+        } else {
+          seen.set(key, job.id);
+        }
+      });
+      return duplicates;
+    }
+
+    function renderHealthChecks() {
+      const activeCustomers = customers.filter(c => c.active !== false);
+      const missingPhone = activeCustomers.filter(c => !String(c.phone || "").trim());
+      const missingAddress = activeCustomers.filter(c => !String(c.address || "").trim());
+      const noNextClean = activeCustomers.filter(c => !getNextJobForCustomer(c.id));
+      const zeroJobs = jobs.filter(j => effectiveStatus(j) !== "Paid" && Number(j.price || 0) <= 0);
+      const duplicateJobs = duplicateFutureJobs();
+      const unpaidJobs = jobs.filter(j => effectiveStatus(j) === "Unpaid");
+
+      const issueCard = (title, subtitle, count, rows) =>
+        '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">' +
+          '<div class="flex items-start justify-between gap-3">' +
+            '<div><div class="font-semibold text-lg">' + title + '</div><div class="text-sm text-slate-500 mt-1">' + subtitle + '</div></div>' +
+            '<div class="text-2xl font-bold text-slate-950">' + count + '</div>' +
+          '</div>' +
+          '<div class="mt-3 grid gap-2">' + (rows || '<div class="text-sm text-slate-500">Nothing to fix here.</div>') + '</div>' +
+        '</div>';
+
+      const customerRows = (items) => items.slice(0, 8).map(c =>
+        '<div class="flex items-center justify-between gap-3 rounded-xl bg-slate-50 border border-slate-200 p-3">' +
+          '<div class="min-w-0"><div class="font-medium truncate">' + escHtml(c.address || c.name || "Unnamed customer") + '</div><div class="text-xs text-slate-500 truncate">' + escHtml(c.name && c.name !== c.address ? c.name : (c.postcode || "")) + '</div></div>' +
+          '<button data-action="editCustomer" data-id="' + c.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Edit</button>' +
+        '</div>'
+      ).join("") + (items.length > 8 ? '<div class="text-xs text-slate-500">+' + (items.length - 8) + ' more</div>' : "");
+
+      const jobRows = (items) => items.slice(0, 8).map(j => {
+        const c = getCustomerById(j.customerId);
+        return '<div class="flex items-center justify-between gap-3 rounded-xl bg-slate-50 border border-slate-200 p-3">' +
+          '<div class="min-w-0"><div class="font-medium truncate">' + escHtml(c && c.address ? c.address : "Unknown address") + ' - ' + pounds(j.price) + '</div><div class="text-xs text-slate-500 truncate">' + escHtml(formatDate(j.dueDate)) + ' - ' + escHtml(j.service || "") + '</div></div>' +
+          '<button data-action="viewJob" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">View</button>' +
+        '</div>';
+      }).join("") + (items.length > 8 ? '<div class="text-xs text-slate-500">+' + (items.length - 8) + ' more</div>' : "");
+
+      content.innerHTML =
+        '<div class="mb-4">' +
+          '<h2 class="rm-section-title text-2xl font-bold text-slate-950">Health checks</h2>' +
+          '<p class="text-sm text-slate-600 mt-2">Quick checks for the messy data that causes missed reminders, wrong totals, or duplicate future work.</p>' +
+        '</div>' +
+        '<div class="grid gap-3">' +
+          issueCard("Missing phone numbers", "These customers cannot use text buttons.", missingPhone.length, customerRows(missingPhone)) +
+          issueCard("Missing addresses", "Address-first cards work best when every customer has an address.", missingAddress.length, customerRows(missingAddress)) +
+          issueCard("No next clean", "Active customers with no upcoming due job.", noNextClean.length, customerRows(noNextClean)) +
+          issueCard("£0 jobs", "Check these are intentional.", zeroJobs.length, jobRows(zeroJobs)) +
+          issueCard("Possible duplicate future jobs", "Same customer, service, date, price and frequency.", duplicateJobs.length, jobRows(duplicateJobs)) +
+          issueCard("Unpaid jobs", "Work marked done but not paid.", unpaidJobs.length, jobRows(unpaidJobs)) +
+        '</div>';
+
+      wireCustomerButtons();
+      wireJobButtons();
     }
 
     function renderSettings() {
@@ -2607,6 +2835,11 @@
 
       content.innerHTML =
         '<div class="grid gap-4">' +
+        '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">' +
+          '<div class="font-semibold text-lg">App version</div>' +
+          '<div class="text-sm text-slate-600 mt-1">RoundMate ' + escHtml(APP_VERSION) + '</div>' +
+          '<div class="text-xs text-slate-500 mt-2">Ask testers to include this if they report a bug.</div>' +
+        '</div>' +
         '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">' +
           '<div class="font-semibold text-lg mb-3">Company settings</div>' +
           '<form id="fSettings" class="grid gap-3">' +
@@ -2767,17 +3000,25 @@
     function openCalendarDay(iso) {
       activeCalendarDayIso = iso;
       const list = jobsOnDate(iso).slice();
+      const moveableJobs = list.filter(job => effectiveStatus(job) === "Due");
+      const total = moveableJobs.reduce((sum, job) => sum + Number(job.price || 0), 0);
 
       const rows = list.length ? list.map((j, index) => {
         const c = getCustomerById(j.customerId);
+        const status = effectiveStatus(j);
         return '<div class="border border-slate-200 rounded-xl p-3">' +
           '<button data-day-job="' + j.id + '" class="w-full text-left hover:text-slate-700">' +
             '<div class="font-semibold">' + escHtml(c && c.address ? c.address : "Unknown address") + ' - ' + pounds(j.price) + '</div>' +
-            '<div class="text-sm text-slate-600">' + escHtml(j.service || "") + ' - ' + escHtml(freqLabel(j.frequencyWeeks)) + ' - ' + escHtml(effectiveStatus(j)) + '</div>' +
+            '<div class="text-sm text-slate-600">' + escHtml(j.service || "") + ' - ' + escHtml(freqLabel(j.frequencyWeeks)) + ' - ' + escHtml(status) + '</div>' +
           '</button>' +
           '<div class="mt-2 flex flex-wrap gap-2">' +
             '<button data-action="moveUp" data-id="' + j.id + '" ' + (index === 0 ? "disabled" : "") + ' class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm disabled:opacity-40">Up</button>' +
             '<button data-action="moveDown" data-id="' + j.id + '" ' + (index === list.length - 1 ? "disabled" : "") + ' class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm disabled:opacity-40">Down</button>' +
+            (status === "Due" ? '<button data-action="textTomorrowReminder" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-sky-600 text-white text-sm font-semibold">Text due reminder</button>' : "") +
+            (status === "Due" ? '<button data-action="tomorrowReminder" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Copy due reminder</button>' : "") +
+            (status === "Due" ? '<button data-action="reschedule" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Reschedule</button>' : "") +
+            (status === "Unpaid" ? '<button data-action="textPaymentReminder" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-sky-600 text-white text-sm font-semibold">Text payment reminder</button>' : "") +
+            (status === "Unpaid" ? '<button data-action="paymentReminder" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Copy payment reminder</button>' : "") +
             '<button data-action="deleteJob" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Delete job</button>' +
           '</div>' +
         '</div>';
@@ -2786,6 +3027,18 @@
       openModal("Jobs on " + formatDate(iso),
         '<div class="grid gap-3">' +
           '<button id="btnAddJobOnDate" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow">+ Add job on ' + formatDate(iso) + '</button>' +
+          (moveableJobs.length ? '<div class="rounded-xl bg-slate-50 border border-slate-200 p-3">' +
+            '<div class="font-semibold text-sm">Move whole day</div>' +
+            '<div class="text-xs text-slate-500 mt-1">Move ' + moveableJobs.length + ' due jobs worth ' + pounds(total) + ' to another date.</div>' +
+            '<label class="mt-2 flex items-start gap-2 text-sm text-slate-700">' +
+              '<input id="moveDayPermanent" type="checkbox" class="mt-1" />' +
+              '<span><span class="font-medium text-slate-900">Move permanently</span><br><span class="text-xs text-slate-500">Tick for holiday/round change. Leave unticked for a rain day so the next clean keeps the old cycle.</span></span>' +
+            '</label>' +
+            '<div class="mt-2 grid grid-cols-[1fr_auto] gap-2">' +
+              '<input id="moveDayDate" type="date" value="' + escAttr(iso) + '" class="px-3 py-2 rounded-xl border border-slate-200" />' +
+              '<button id="btnMoveDay" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">Move day</button>' +
+            '</div>' +
+          '</div>' : "") +
           rows +
         '</div>'
       );
@@ -2794,6 +3047,18 @@
         closeModal();
         openAddJob(iso);
       });
+
+      if ($("btnMoveDay")) {
+        $("btnMoveDay").addEventListener("click", async () => {
+          const toIso = $("moveDayDate").value;
+          if (!toIso || toIso === iso) {
+            setNotice("Choose a different date to move these jobs.");
+            setTimeout(() => setNotice(""), 2500);
+            return;
+          }
+          await moveCalendarDay(iso, toIso, $("moveDayPermanent") && $("moveDayPermanent").checked);
+        });
+      }
 
       document.querySelectorAll("[data-day-job]").forEach(b => b.addEventListener("click", () => {
         closeModal();
@@ -2812,6 +3077,7 @@
       if (activeTab === "rounds") { renderRounds(); return; }
       if (activeTab === "calendar") { renderCalendar(); return; }
       if (activeTab === "stats") { renderStats(); return; }
+      if (activeTab === "health") { renderHealthChecks(); return; }
       if (activeTab === "settings") { renderSettings(); return; }
 
       const today = todayISO();
@@ -2827,18 +3093,23 @@
       if (activeTab === "overdue") list = list.filter(j => effectiveStatus(j) === "Due" && j.dueDate < today);
       if (activeTab === "unpaid") list = list.filter(j => effectiveStatus(j) === "Unpaid");
 
+      if (activeTab === "unpaid") {
+        renderUnpaidJobs(list);
+        return;
+      }
+
       renderJobs(sortJobsByDue(list));
     }
 
     function openAddCustomer() {
       openModal("Add Customer",
         '<form id="fCustomer" class="grid gap-3">' +
-          '<div class="grid gap-1"><label class="text-sm font-medium">Name</label><input name="name" class="px-3 py-2 rounded-xl border border-slate-200" required /></div>' +
+          '<div class="grid gap-1"><label class="text-sm font-medium">Address</label><input name="address" placeholder="Main thing you need on the round" class="px-3 py-2 rounded-xl border border-slate-200" /></div>' +
+          '<div class="grid gap-1"><label class="text-sm font-medium">Name optional</label><input name="name" placeholder="Leave blank if you only know the address" class="px-3 py-2 rounded-xl border border-slate-200" /></div>' +
           '<div class="grid grid-cols-2 gap-3">' +
             '<div class="grid gap-1"><label class="text-sm font-medium">Phone</label><input name="phone" class="px-3 py-2 rounded-xl border border-slate-200" /></div>' +
             '<div class="grid gap-1"><label class="text-sm font-medium">Email</label><input name="email" type="email" class="px-3 py-2 rounded-xl border border-slate-200" /></div>' +
           '</div>' +
-          '<div class="grid gap-1"><label class="text-sm font-medium">Address</label><input name="address" class="px-3 py-2 rounded-xl border border-slate-200" /></div>' +
           '<div class="grid grid-cols-2 gap-3">' +
             '<div class="grid gap-1"><label class="text-sm font-medium">Postcode</label><input name="postcode" class="px-3 py-2 rounded-xl border border-slate-200" /></div>' +
             '<div class="grid gap-1"><label class="text-sm font-medium">How they pay</label><select name="preferredPayment" class="px-3 py-2 rounded-xl border border-slate-200">' + paymentOptionsHtml("Cash") + '</select></div>' +
@@ -2873,12 +3144,12 @@
 
       openModal("Edit Customer",
         '<form id="fEditCustomer" class="grid gap-3">' +
-          '<div class="grid gap-1"><label class="text-sm font-medium">Name</label><input name="name" value="' + escAttr(c.name || "") + '" class="px-3 py-2 rounded-xl border border-slate-200" required /></div>' +
+          '<div class="grid gap-1"><label class="text-sm font-medium">Address</label><input name="address" value="' + escAttr(c.address || "") + '" class="px-3 py-2 rounded-xl border border-slate-200" /></div>' +
+          '<div class="grid gap-1"><label class="text-sm font-medium">Name optional</label><input name="name" value="' + escAttr(c.name || "") + '" class="px-3 py-2 rounded-xl border border-slate-200" /></div>' +
           '<div class="grid grid-cols-2 gap-3">' +
             '<div class="grid gap-1"><label class="text-sm font-medium">Phone</label><input name="phone" value="' + escAttr(c.phone || "") + '" class="px-3 py-2 rounded-xl border border-slate-200" /></div>' +
             '<div class="grid gap-1"><label class="text-sm font-medium">Email</label><input name="email" type="email" value="' + escAttr(c.email || "") + '" class="px-3 py-2 rounded-xl border border-slate-200" /></div>' +
           '</div>' +
-          '<div class="grid gap-1"><label class="text-sm font-medium">Address</label><input name="address" value="' + escAttr(c.address || "") + '" class="px-3 py-2 rounded-xl border border-slate-200" /></div>' +
           '<div class="grid grid-cols-2 gap-3">' +
             '<div class="grid gap-1"><label class="text-sm font-medium">Postcode</label><input name="postcode" value="' + escAttr(c.postcode || "") + '" class="px-3 py-2 rounded-xl border border-slate-200" /></div>' +
             '<div class="grid gap-1"><label class="text-sm font-medium">How they pay</label><select name="preferredPayment" class="px-3 py-2 rounded-xl border border-slate-200">' + paymentOptionsHtml(c.preferredPayment || "Cash") + '</select></div>' +
@@ -3002,8 +3273,9 @@
         if (demoMode) {
           j.dueDate = newDate;
           j.routeOrder = null;
+          j.scheduleAnchorDate = null;
         } else {
-          await updateDoc(doc(db, "jobs", jobId), { dueDate: newDate, routeOrder: null });
+          await updateDoc(doc(db, "jobs", jobId), { dueDate: newDate, routeOrder: null, scheduleAnchorDate: null });
           await loadJobs();
         }
         closeModal();
@@ -3154,6 +3426,7 @@
       const unpaidJobs = jobs.filter(j => effectiveStatus(j) === "Unpaid").length;
       return [
         "RoundMate beta bug report",
+        "App version: " + APP_VERSION,
         "Date/time: " + new Date().toLocaleString(),
         "Current tab: " + activeTab,
         "Demo mode: " + (demoMode ? "yes" : "no"),
