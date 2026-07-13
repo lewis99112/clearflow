@@ -474,6 +474,24 @@
       return Number(job && job.price || 0) * yearlyMultiplier(job && job.frequencyWeeks);
     }
 
+    function roundValueJobs() {
+      const today = todayISO();
+      const byService = new Map();
+      sortJobsByDue(jobs.filter(job => {
+        return effectiveStatus(job) === "Due" &&
+          isActiveCustomer(job.customerId) &&
+          Number(job.frequencyWeeks || 0) !== 0 &&
+          String(job.dueDate || "") >= today;
+      }).slice()).forEach(job => {
+        const key = [
+          job.customerId || "",
+          String(job.service || "").trim().toLowerCase() || "window clean"
+        ].join("|");
+        if (!byService.has(key)) byService.set(key, job);
+      });
+      return Array.from(byService.values());
+    }
+
     function monthName(monthIndex) {
       return ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][monthIndex];
     }
@@ -2699,11 +2717,14 @@
       let paidYear = 0;
       let scheduledMonth = 0;
       let scheduledYear = 0;
+      let roundWeeklyValue = 0;
+      let roundMonthlyValue = 0;
+      let roundYearlyValue = 0;
       let expectedMonthly = 0;
       let expectedYearly = 0;
       let unpaidTotal = 0;
       const activeCustomers = customers.filter(c => c.active !== false).length;
-      const activeOpenJobs = jobs.filter(j => effectiveStatus(j) !== "Paid" && isActiveCustomer(j.customerId));
+      const valueJobs = roundValueJobs();
 
       jobs.forEach(j => {
         const st = effectiveStatus(j);
@@ -2726,24 +2747,29 @@
         }
       });
 
-      activeOpenJobs.forEach(j => {
-        expectedYearly += expectedYearlyValueForJob(j);
+      valueJobs.forEach(j => {
+        const yearly = expectedYearlyValueForJob(j);
+        roundYearlyValue += yearly;
+        roundWeeklyValue += yearly / 52;
       });
-      expectedMonthly = expectedYearly / 12;
+      roundMonthlyValue = roundYearlyValue / 12;
+      expectedYearly = roundYearlyValue;
+      expectedMonthly = roundMonthlyValue;
 
       content.innerHTML =
         '<div class="grid md:grid-cols-4 gap-3">' +
           '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm"><div class="text-sm text-slate-500">Paid this month</div><div class="text-2xl font-bold">' + pounds(paidMonth) + '</div></div>' +
           '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm"><div class="text-sm text-slate-500">Paid this year</div><div class="text-2xl font-bold">' + pounds(paidYear) + '</div></div>' +
-          '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm"><div class="text-sm text-slate-500">Scheduled this month</div><div class="text-2xl font-bold">' + pounds(scheduledMonth) + '</div></div>' +
-          '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm"><div class="text-sm text-slate-500">Scheduled this year</div><div class="text-2xl font-bold">' + pounds(scheduledYear) + '</div></div>' +
-          '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm"><div class="text-sm text-slate-500">Expected monthly value</div><div class="text-2xl font-bold">' + pounds(expectedMonthly) + '</div></div>' +
-          '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm"><div class="text-sm text-slate-500">Expected yearly value</div><div class="text-2xl font-bold">' + pounds(expectedYearly) + '</div></div>' +
+          '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm"><div class="text-sm text-slate-500">Calendar scheduled this month</div><div class="text-2xl font-bold">' + pounds(scheduledMonth) + '</div></div>' +
+          '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm"><div class="text-sm text-slate-500">Calendar scheduled this year</div><div class="text-2xl font-bold">' + pounds(scheduledYear) + '</div></div>' +
+          '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm"><div class="text-sm text-slate-500">Round weekly value</div><div class="text-2xl font-bold">' + pounds(roundWeeklyValue) + '</div></div>' +
+          '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm"><div class="text-sm text-slate-500">Round monthly value</div><div class="text-2xl font-bold">' + pounds(expectedMonthly) + '</div></div>' +
+          '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm"><div class="text-sm text-slate-500">Round yearly value</div><div class="text-2xl font-bold">' + pounds(expectedYearly) + '</div></div>' +
           '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm"><div class="text-sm text-slate-500">Unpaid total</div><div class="text-2xl font-bold">' + pounds(unpaidTotal) + '</div></div>' +
           '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm"><div class="text-sm text-slate-500">Active customers</div><div class="text-2xl font-bold">' + activeCustomers + '</div></div>' +
         '</div>' +
         '<div class="mt-4 p-4 rounded-2xl bg-sky-50 border border-sky-200 text-sm text-sky-900">' +
-          '<b>Note:</b> scheduled and expected values are work value estimates, not money already earned. Paid totals only count jobs marked Paid.' +
+          '<b>Note:</b> calendar scheduled only counts jobs already visible in the calendar. Round value uses each active customer/service current recurring job, so it should match spreadsheet-style weekly/monthly/yearly round value. Paid totals only count jobs marked Paid.' +
         '</div>';
     }
 
