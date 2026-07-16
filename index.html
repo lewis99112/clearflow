@@ -810,6 +810,33 @@
       return list[0] || null;
     }
 
+    function getNextJobForCustomerInRound(customerId, roundId) {
+      const customer = getCustomerById(customerId);
+      if (!customer || customer.roundId !== roundId) return null;
+      return getNextJobForCustomer(customerId);
+    }
+
+    function roundSummary(roundId) {
+      const roundCustomers = customers.filter(c => c.roundId === roundId);
+      const activeCustomers = roundCustomers.filter(c => c.active !== false);
+      let activeJobs = 0;
+      let value = 0;
+
+      activeCustomers.forEach(customer => {
+        const next = getNextJobForCustomerInRound(customer.id, roundId);
+        if (!next) return;
+        activeJobs++;
+        value += Number(next.price || 0);
+      });
+
+      return {
+        customers: roundCustomers.length,
+        active: activeCustomers.length,
+        activeJobs,
+        value
+      };
+    }
+
     function getFutureJobsForRound(roundId, excludeJobId) {
       const today = todayISO();
       return sortJobsByDue(jobs.filter(j => {
@@ -2424,10 +2451,7 @@
         '</div>' +
         '<div class="grid gap-3">' +
           (rounds.length ? rounds.map(r => {
-            const activeJobs = jobs.filter(j => j.roundId === r.id && effectiveStatus(j) !== "Paid");
-            const roundCustomers = customers.filter(c => c.roundId === r.id);
-            const activeCustomers = roundCustomers.filter(c => c.active !== false).length;
-            const value = activeJobs.reduce((sum,j) => sum + Number(j.price || 0), 0);
+            const summary = roundSummary(r.id);
 
             return '' +
               '<div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">' +
@@ -2437,7 +2461,7 @@
                       '<span class="inline-block w-4 h-4 rounded-full border border-slate-300" style="background:' + escAttr(r.color || "#0f172a") + '"></span>' +
                       escHtml(r.name || "") +
                     '</div>' +
-                    '<div class="text-sm text-slate-500">' + activeCustomers + ' customers - ' + activeJobs.length + ' active jobs - ' + pounds(value) + '</div>' +
+                    '<div class="text-sm text-slate-500">' + summary.customers + ' customers - ' + summary.active + ' active - ' + pounds(summary.value) + ' round total</div>' +
                   '</div>' +
                   '<div class="flex flex-wrap justify-end gap-2">' +
                     '<button data-action="openRound" data-id="' + r.id + '" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium">View</button>' +
@@ -2493,10 +2517,9 @@
       const roundCustomers = customers
         .filter(c => c.roundId === roundId)
         .sort((a, b) => String(a.address || a.name || "").localeCompare(String(b.address || b.name || "")));
-      const activeJobs = jobs.filter(j => j.roundId === roundId && effectiveStatus(j) !== "Paid");
-      const value = activeJobs.reduce((sum, j) => sum + Number(j.price || 0), 0);
+      const summary = roundSummary(roundId);
       const customerRows = roundCustomers.length ? roundCustomers.map(c => {
-        const next = getNextJobForCustomer(c.id);
+        const next = getNextJobForCustomerInRound(c.id, roundId);
         return '' +
           '<div class="rounded-2xl border border-slate-200 p-3 bg-white">' +
             '<div class="flex items-start justify-between gap-3">' +
@@ -2504,7 +2527,7 @@
                 '<div class="font-semibold text-slate-950">' + escHtml(c.address || c.name || "Unnamed customer") + '</div>' +
                 (c.postcode ? '<div class="text-sm text-slate-600">' + escHtml(c.postcode) + '</div>' : "") +
                 (c.name && c.name !== c.address ? '<div class="text-sm text-slate-500">' + escHtml(c.name) + '</div>' : "") +
-                '<div class="text-xs text-slate-500 mt-1">' + (next ? 'Next clean ' + escHtml(formatDate(next.dueDate)) + ' - ' + pounds(next.price) : 'No upcoming job') + '</div>' +
+                '<div class="text-xs text-slate-500 mt-1">' + (next ? 'Next clean ' + escHtml(formatDate(next.dueDate)) + ' - ' + pounds(next.price) : 'No upcoming job - not included in round total') + '</div>' +
               '</div>' +
               (c.active === false ? '<span class="text-xs px-2 py-1 rounded-lg bg-slate-100 text-slate-500">Inactive</span>' : "") +
             '</div>' +
@@ -2518,10 +2541,11 @@
       openModal(r.name || "Round",
         '<div class="grid gap-4">' +
           '<div class="grid grid-cols-3 gap-2">' +
-            '<div class="rounded-xl bg-slate-50 border border-slate-200 p-3"><div class="text-xs text-slate-500">Customers</div><div class="font-bold text-lg">' + roundCustomers.length + '</div></div>' +
-            '<div class="rounded-xl bg-slate-50 border border-slate-200 p-3"><div class="text-xs text-slate-500">Active jobs</div><div class="font-bold text-lg">' + activeJobs.length + '</div></div>' +
-            '<div class="rounded-xl bg-slate-50 border border-slate-200 p-3"><div class="text-xs text-slate-500">Value</div><div class="font-bold text-lg">' + pounds(value) + '</div></div>' +
+            '<div class="rounded-xl bg-slate-50 border border-slate-200 p-3"><div class="text-xs text-slate-500">Customers</div><div class="font-bold text-lg">' + summary.customers + '</div></div>' +
+            '<div class="rounded-xl bg-slate-50 border border-slate-200 p-3"><div class="text-xs text-slate-500">Active</div><div class="font-bold text-lg">' + summary.active + '</div></div>' +
+            '<div class="rounded-xl bg-slate-50 border border-slate-200 p-3"><div class="text-xs text-slate-500">Round total</div><div class="font-bold text-lg">' + pounds(summary.value) + '</div></div>' +
           '</div>' +
+          '<div class="text-xs text-slate-500">Round total adds up active customers with an upcoming job. Active customers with no upcoming job are shown below so they can be fixed.</div>' +
           '<div class="flex flex-wrap gap-2">' +
             '<button data-action="editRound" data-id="' + r.id + '" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium">Adjust round</button>' +
             '<button id="roundRouteButton" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium">Route order</button>' +
