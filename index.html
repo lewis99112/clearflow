@@ -4177,7 +4177,10 @@
       if (localStorage.getItem("roundmateTrialSetupHidden") === "1") return false;
       const progress = trialSetupProgress();
       if (activeTab !== "today") return false;
-      if (progress.doneCount >= progress.steps.length) return false;
+      if (progress.doneCount >= progress.steps.length) {
+        localStorage.setItem("roundmateTrialSetupHidden", "1");
+        return false;
+      }
       if (progress.doneCount < progress.steps.length) return true;
       return progress.activeCustomers < 3 || progress.scheduledJobs < 3;
     }
@@ -4264,7 +4267,7 @@
           '<div><h2 class="rm-section-title text-2xl font-bold text-slate-950">' + title + '</h2>' + subcopy + printButton + '</div>' +
           '<div class="text-right"><div class="text-2xl font-bold text-slate-950">' + list.length + '</div><div class="text-sm text-slate-500">' + pounds(total) + '</div></div>' +
         '</div>';
-      const welcome = (activeTab === "today" && (!list.length || shouldShowTrialWelcome())) ? trialWelcomeCard() : "";
+      const welcome = shouldShowTrialWelcome() ? trialWelcomeCard() : "";
       if (!list.length) {
         content.innerHTML = welcome + header + '<div class="p-5 rounded-lg bg-white border border-slate-200 text-slate-600">Nothing here.</div>';
         wireTrialWelcomeCard();
