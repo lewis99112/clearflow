@@ -1036,13 +1036,19 @@
       return rounds.find(r => r.id === id) || null;
     }
 
+    function jobRoundId(job) {
+      if (job && job.roundId) return job.roundId;
+      const customer = getCustomerById(job && job.customerId);
+      return customer && customer.roundId ? customer.roundId : "";
+    }
+
     function roundNameForJob(job) {
-      const round = getRoundById(job && job.roundId || "");
+      const round = getRoundById(jobRoundId(job));
       return round && round.name ? round.name : "No round";
     }
 
     function roundColorForJob(job) {
-      const round = getRoundById(job && job.roundId || "");
+      const round = getRoundById(jobRoundId(job));
       return round && round.color ? round.color : "#e2e8f0";
     }
 
@@ -1060,7 +1066,8 @@
       const map = new Map();
       list.forEach(job => {
         const name = roundNameForJob(job);
-        const key = job && job.roundId ? job.roundId : "__no_round__";
+        const roundId = jobRoundId(job);
+        const key = roundId || "__no_round__";
         if (!map.has(key)) {
           map.set(key, {
             key,
@@ -2069,6 +2076,14 @@
     }
 
     async function setCustomerActive(customerId, active) {
+      const customer = customers.find(c => c.id === customerId);
+      if (!active) {
+        const openJobs = jobs.filter(j => j.customerId === customerId && effectiveStatus(j) !== "Paid");
+        const warning = openJobs.length
+          ? "\n\nThis customer still has " + openJobs.length + " due/unpaid job" + (openJobs.length === 1 ? "" : "s") + ". They will be hidden from the normal Active customer list until you enable them again."
+          : "\n\nThey will be hidden from the normal Active customer list until you enable them again.";
+        if (!confirm("Disable " + customerLabel(customer) + "?" + warning + "\n\nUse this only when someone has stopped using you. Continue?")) return;
+      }
       const action = active ? "enableCustomer" : "disableCustomer";
       const actionKey = action + ":" + customerId;
       if (pendingActions.has(actionKey)) return;
@@ -2329,7 +2344,7 @@
       return {
         ownerUid: demoMode ? "demo" : uid,
         customerId: job.customerId,
-        roundId: job.roundId || "",
+        roundId: jobRoundId(job),
         service: job.service || "Window Clean",
         frequencyWeeks: fw,
         recurrenceDay: recurrenceDayFor(fw, job.scheduleAnchorDate || job.dueDate, job.recurrenceDay),
@@ -3766,7 +3781,7 @@
 
     function jobCard(job) {
       const c = getCustomerById(job.customerId);
-      const r = getRoundById(job.roundId || "");
+      const r = getRoundById(jobRoundId(job));
       const status = effectiveStatus(job);
       const address = c && c.address ? c.address : "";
       const postcode = c && c.postcode ? c.postcode : "";
@@ -4838,8 +4853,11 @@
 
       const customerRows = (items) => items.slice(0, 8).map(c =>
         '<div class="flex items-center justify-between gap-3 rounded-xl bg-slate-50 border border-slate-200 p-3">' +
-          '<div class="min-w-0"><div class="font-medium truncate">' + escHtml(c.address || c.name || "Unnamed customer") + '</div><div class="text-xs text-slate-500 truncate">' + escHtml(c.name && c.name !== c.address ? c.name : (c.postcode || "")) + '</div></div>' +
-          '<button data-action="editCustomer" data-id="' + c.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Edit</button>' +
+          '<div class="min-w-0"><div class="font-medium truncate">' + escHtml(c.address || c.name || "Unnamed customer") + '</div><div class="text-xs text-slate-500 truncate">' + escHtml((c.active === false ? "Inactive - " : "") + (c.name && c.name !== c.address ? c.name : (c.postcode || ""))) + '</div></div>' +
+          '<div class="flex shrink-0 gap-2">' +
+            (c.active === false ? '<button data-action="enableCustomer" data-id="' + c.id + '" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">Enable</button>' : '') +
+            '<button data-action="editCustomer" data-id="' + c.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Edit</button>' +
+          '</div>' +
         '</div>'
       ).join("") + (items.length > 8 ? '<div class="text-xs text-slate-500">+' + (items.length - 8) + ' more</div>' : "");
 
