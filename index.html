@@ -3795,9 +3795,9 @@
       let buttons = "";
 
       if (status === "Due") {
-        buttons += '<button data-action="done" data-id="' + job.id + '" class="px-3 py-3 rounded-xl bg-slate-900 text-white text-sm font-medium">Cleaned</button>';
+        buttons += '<button data-action="done" data-id="' + job.id + '" class="px-3 py-3 rounded-xl bg-slate-900 text-white text-sm font-medium">Mark cleaned</button>';
         buttons += '<button data-action="paid" data-id="' + job.id + '" class="px-3 py-3 rounded-xl bg-white border border-slate-200 text-sm font-medium">Paid</button>';
-        buttons += '<button data-action="textPaymentReminder" data-id="' + job.id + '" class="px-3 py-3 rounded-xl bg-white border border-slate-200 text-sm font-medium">Text</button>';
+        buttons += '<button data-action="textCleaned" data-id="' + job.id + '" class="px-3 py-3 rounded-xl bg-white border border-slate-200 text-sm font-medium">Text cleaned</button>';
       }
 
       if (status === "Unpaid") {
@@ -5868,12 +5868,13 @@
             (jobNotes ? '<div class="mt-2 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 p-3"><b>Job note:</b><div class="whitespace-pre-wrap">' + escHtml(jobNotes) + '</div></div>' : "") +
           '</div>' +
           '<div class="flex flex-wrap gap-2">' +
-            (status === "Due" ? '<button data-action="done" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">Cleaned</button>' : "") +
+            (status === "Due" ? '<button data-action="done" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">Mark cleaned</button>' : "") +
             (status !== "Paid" ? '<button data-action="paid" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Paid</button>' : "") +
             (method === "GoCardless" && status !== "Paid" ? '<button data-action="gcRequested" data-id="' + j.id + '" ' + (gcRequested ? "disabled" : "") + ' class="px-3 py-2 rounded-xl bg-white border border-sky-200 text-sky-700 text-sm disabled:opacity-50">' + (gcRequested ? "GC requested" : "Mark GC requested") + '</button>' : "") +
+            (status === "Due" ? '<button data-action="textCleaned" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-sky-600 text-white text-sm font-semibold">Text cleaned today</button>' : "") +
             '<button data-action="cleanedText" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Copy cleaned today</button>' +
-            '<button data-action="textPaymentReminder" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-sky-600 text-white text-sm font-semibold">Text payment reminder</button>' +
-            '<button data-action="paymentReminder" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Copy payment reminder</button>' +
+            (status === "Unpaid" ? '<button data-action="textPaymentReminder" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-sky-600 text-white text-sm font-semibold">Text payment reminder</button>' : "") +
+            (status === "Unpaid" ? '<button data-action="paymentReminder" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Copy payment reminder</button>' : "") +
             '<button data-action="reviewText" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Copy review request</button>' +
             '<button data-action="invoice" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Invoice</button>' +
             (status === "Due" ? '<button data-action="skip" data-id="' + j.id + '" class="px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm">Skip</button>' : "") +
