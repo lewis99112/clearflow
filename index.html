@@ -2521,6 +2521,7 @@
       setActionButtonLoading(jobId, "done", "Saving...");
 
       const job = jobs.find(j => j.id === jobId);
+      let currentMarkedCleaned = false;
       try {
         if (!job || effectiveStatus(job) !== "Due") return;
         if (!isActiveCustomer(job.customerId)) {
@@ -2557,38 +2558,35 @@
         let existingNext = fw !== 0 ? existingNextRecurringJob(job, jobId, nextDue, fw) : null;
         let nextJob = null;
         let alreadyChanged = false;
-        await runTransaction(db, async transaction => {
-          const jobRef = doc(db, "jobs", jobId);
-          const currentSnap = await transaction.get(jobRef);
-          let nextRef = null;
-          let nextSnap = null;
-          let nextJobId = "";
-          if (fw !== 0 && !existingNext) {
-            nextJobId = "next_" + jobId;
-            nextRef = doc(db, "jobs", nextJobId);
-            nextSnap = await transaction.get(nextRef);
-          }
+        const jobRef = doc(db, "jobs", jobId);
+        const currentSnap = await getDoc(jobRef);
 
-          if (currentSnap.exists() && effectiveStatus(currentSnap.data()) !== "Due") {
-            alreadyChanged = true;
-            return;
-          }
-
-          transaction.update(jobRef, {
+        if (!currentSnap.exists()) throw new Error("Job no longer exists.");
+        if (effectiveStatus(currentSnap.data()) !== "Due") {
+          alreadyChanged = true;
+        } else {
+          await updateDoc(jobRef, {
+            ownerUid: uid,
             status: "Unpaid",
+            paid: false,
             doneAt: serverTimestamp()
           });
+          currentMarkedCleaned = true;
 
-          if (nextRef && nextSnap) {
+          if (fw !== 0 && !existingNext) {
+            const nextJobId = "next_" + jobId;
+            const nextRef = doc(db, "jobs", nextJobId);
+            const nextSnap = await getDoc(nextRef);
+
             if (nextSnap.exists()) {
               existingNext = { id: nextJobId, ...nextSnap.data() };
             } else {
               nextJob = buildNextRecurringJob(job, jobId, nextDue, serverTimestamp());
-              transaction.set(nextRef, nextJob);
+              await setDoc(nextRef, nextJob);
               nextJob = { ...nextJob, id: nextJobId, createdAt: new Date() };
             }
           }
-        });
+        }
 
         if (alreadyChanged) {
           await loadJobs();
@@ -2610,7 +2608,14 @@
           : (existingNext ? "Next clean already exists for " + formatDate(nextDue) + "." : "Next clean created for " + formatDate(nextDue) + "."));
       } catch (error) {
         console.error(error);
-        setNotice("Could not mark this job done. Check your connection and try again.");
+        if (currentMarkedCleaned) {
+          await loadJobs();
+          setNotice("Job was marked cleaned, but RoundMate could not create/check the next clean. Please check this customer after.");
+          alert("The job was marked cleaned, but RoundMate could not create/check the next clean. Please check this customer's next clean date.");
+        } else {
+          setNotice("Could not mark this job cleaned. Nothing was changed. Check your connection and try again.");
+          alert("RoundMate could not mark this job cleaned. Nothing was changed. Please check your connection and try again.");
+        }
         render();
       } finally {
         pendingActions.delete(actionKey);
