@@ -2421,12 +2421,10 @@
           const jobRef = doc(db, "jobs", jobId);
           const currentSnap = await transaction.get(jobRef);
           let nextRef = null;
-          let nextSnap = null;
           let nextJobId = "";
           if (nextDue && !localExistingNext) {
             nextJobId = "next_" + jobId;
             nextRef = doc(db, "jobs", nextJobId);
-            nextSnap = await transaction.get(nextRef);
           }
 
           if (currentSnap.exists() && effectiveStatus(currentSnap.data()) === "Paid") {
@@ -2441,12 +2439,10 @@
             paidAt: serverTimestamp()
           });
 
-          if (nextRef && nextSnap) {
-            if (!nextSnap.exists()) {
-              nextJob = buildNextRecurringJob(job, jobId, nextDue, serverTimestamp());
-              transaction.set(nextRef, nextJob);
-              nextJob = { ...nextJob, id: nextJobId, createdAt: new Date() };
-            }
+          if (nextRef) {
+            nextJob = buildNextRecurringJob(job, jobId, nextDue, serverTimestamp());
+            transaction.set(nextRef, nextJob);
+            nextJob = { ...nextJob, id: nextJobId, createdAt: new Date() };
           }
         });
 
@@ -2576,15 +2572,9 @@
           if (fw !== 0 && !existingNext) {
             const nextJobId = "next_" + jobId;
             const nextRef = doc(db, "jobs", nextJobId);
-            const nextSnap = await getDoc(nextRef);
-
-            if (nextSnap.exists()) {
-              existingNext = { id: nextJobId, ...nextSnap.data() };
-            } else {
-              nextJob = buildNextRecurringJob(job, jobId, nextDue, serverTimestamp());
-              await setDoc(nextRef, nextJob);
-              nextJob = { ...nextJob, id: nextJobId, createdAt: new Date() };
-            }
+            nextJob = buildNextRecurringJob(job, jobId, nextDue, serverTimestamp());
+            await setDoc(nextRef, nextJob);
+            nextJob = { ...nextJob, id: nextJobId, createdAt: new Date() };
           }
         }
 
@@ -3529,13 +3519,56 @@
         const amount = $("donePaidAmount") ? Number($("donePaidAmount").value) : Number(job.price || 0);
         return { ...job, price: Number.isFinite(amount) && amount >= 0 ? amount : Number(job.price || 0) };
       };
+      const saveAdjustedCharge = async () => {
+        const adjusted = adjustedJob();
+        const amount = Number(adjusted.price || 0);
+        if (!Number.isFinite(amount) || amount < 0) {
+          setNotice("Enter a valid amount charged today.");
+          return null;
+        }
+
+        const oldAmount = Number(job.price || 0);
+        if (Math.abs(amount - oldAmount) < 0.001) return adjusted;
+
+        job.price = amount;
+        const localJob = jobs.find(item => item.id === job.id);
+        if (localJob) localJob.price = amount;
+
+        if (!demoMode) {
+          await updateDoc(doc(db, "jobs", job.id), {
+            ownerUid: uid,
+            price: amount
+          });
+        }
+
+        renderSubhead();
+        render();
+        refreshOpenCalendarDay();
+        return adjusted;
+      };
       if (paidButton) {
         paidButton.addEventListener("click", () => markPaid(job.id, $("donePaidAmount") ? $("donePaidAmount").value : undefined));
       }
       const copyCleanedButton = $("modalBody").querySelector('[data-action="cleanedTextAdjusted"][data-id="' + job.id + '"]');
-      if (copyCleanedButton) copyCleanedButton.addEventListener("click", () => copyToClipboard(messageCleaned(adjustedJob(), customer)));
+      if (copyCleanedButton) copyCleanedButton.addEventListener("click", async () => {
+        try {
+          const adjusted = await saveAdjustedCharge();
+          if (adjusted) copyToClipboard(messageCleaned(adjusted, customer));
+        } catch (error) {
+          console.error(error);
+          alert("RoundMate could not save that changed amount. Please try again before sending the message.");
+        }
+      });
       const textCleanedButton = $("modalBody").querySelector('[data-action="textCleanedAdjusted"][data-id="' + job.id + '"]');
-      if (textCleanedButton) textCleanedButton.addEventListener("click", () => openTextMessage(customer, messageCleaned(adjustedJob(), customer)));
+      if (textCleanedButton) textCleanedButton.addEventListener("click", async () => {
+        try {
+          const adjusted = await saveAdjustedCharge();
+          if (adjusted) openTextMessage(customer, messageCleaned(adjusted, customer));
+        } catch (error) {
+          console.error(error);
+          alert("RoundMate could not save that changed amount. Please try again before sending the message.");
+        }
+      });
       wireJobButtons($("modalBody"));
     }
 
